@@ -22,7 +22,7 @@ def get_user_input():
             stdout.flush()
 			# exit program with status 0
             _exit(0)
-        
+        # TODO - The below commands can be removed once the client is implemented
         elif cmd == "intra-shard":
             # intra-shard <from account> <to account> <amount>
             # The balance for both accounts is stored in same cluster
