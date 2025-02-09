@@ -16,9 +16,6 @@ def get_user_input():
         cmd = user_input.split()[0]
 
         if cmd == "exit":
-			# close all client sockets
-            #for sock in out_socks:
-            #    sock[0].close()
             stdout.flush()
 			# exit program with status 0
             _exit(0)
