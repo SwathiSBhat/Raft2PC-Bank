@@ -1,28 +1,6 @@
 import threading
 from time import sleep
-
-def handle_client_msg(conn, data):
-    sleep(3)
-    data = data.decode()
-    words = data.split()
-
-    try:
-        # TODO - Add handling here 
-        print(f"Received message from client: {data}")
-    except:
-	    print("Exception in handling client message")
-
-def recv_msg(conn, addr):
-	while True:
-		try:
-			data = conn.recv(1024)
-		except:
-			break
-		if not data:
-			conn.close()
-			break
-        # Spawn new thread for every msg to ensure IO is non-blocking
-		threading.Thread(target=handle_client_msg, args=(conn, data)).start()
+import json
 
 def get_cluster(server_id):
 	'''
@@ -34,7 +12,7 @@ def get_cluster(server_id):
 	cluster = (server_id - 1) // 3
 	return cluster
 
-def get_servers_in_cluster(cluster):
+def get_servers_in_cluster(cluster, server_id):
 	'''
 	Return the servers part of cluster apart from the server itself
 	1,2,3 -> 1
@@ -46,6 +24,13 @@ def get_servers_in_cluster(cluster):
 	servers = [i for i in range(start, end) if i != server_id]
 	return servers
 
+def send_msg(conn, msg):
+	'''
+	Send message to the server
+	'''
+	msg = json.dumps(msg) + "\n"
+	conn.sendall(msg.encode("utf-8"))
+
 class Message:
 	def __init__(self, msg_type, dest_id, term=None, candidate_id=None, last_log_index=None, last_log_term=None, vote=None):
 		self.msg_type = msg_type
@@ -55,3 +40,15 @@ class Message:
 		self.last_log_term = last_log_term
 		self.dest_id = dest_id
 		self.vote = vote
+
+	def get_message(self):
+		msg = {}
+		msg["msg_type"] = self.msg_type
+		msg["term"] = self.term
+		msg["candidate_id"] = self.candidate_id
+		msg["last_log_index"] = self.last_log_index
+		msg["last_log_term"] = self.last_log_term
+		msg["dest_id"] = self.dest_id
+		msg["vote"] = self.vote
+		return msg
+	

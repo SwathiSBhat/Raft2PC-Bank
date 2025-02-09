@@ -9,11 +9,60 @@ import socket
 from sys import stdout
 from os import _exit
 import threading
-import time
-import os
-import random
+from time import sleep
+import struct
 import config
-import common_utils
+import json
+from common_utils import send_msg
+
+server_socks = {}
+
+def handle_server_msg(conn, data):
+    global server_socks
+
+    sleep(1)
+
+    try:
+        if data["msg_type"] == "init":
+            # Init: Connected to server <node_id>
+            node_id = int(data["node_id"])
+            server_socks[node_id] = conn
+            print(f"Connected to server {node_id}")
+        # Forward message to destination server in the cluster
+        else:
+            dest_id = data["dest_id"]
+            if dest_id not in server_socks:
+                print(f"Server {dest_id} not connected")
+            else:
+                print(f"Forwarding message to server {dest_id}")
+                send_msg(server_socks[dest_id], data)
+    except:
+	    print("Exception in handling server message at network server")
+
+def recv_msg(conn, addr):
+    buffer = ""
+    while True:
+        try:
+            data = conn.recv(1024)
+        except:
+            break
+        if not data:
+            conn.close()
+            break
+        buffer += data.decode()
+
+        while "\n" in buffer:
+            msg, buffer = buffer.split("\n", 1)
+            try:
+                data = json.loads(msg)
+                # Spawn new thread for every msg to ensure IO is non-blocking
+                threading.Thread(target=handle_server_msg, args=(conn, data)).start()
+            except json.JSONDecodeError:
+                print("Error in decoding JSON")
+                break
+            except:
+                print("Exception in handling server message at network server")
+                break
 
 def get_user_input():
     while True:
@@ -84,4 +133,4 @@ if __name__ == "__main__":
             break
         out_socks.append((conn, addr))
 		# Start a new thread to handle incoming connections from other clients
-        threading.Thread(target=common_utils.recv_msg, args=(conn,addr)).start()
+        threading.Thread(target=recv_msg, args=(conn,addr)).start()

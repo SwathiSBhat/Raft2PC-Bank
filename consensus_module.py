@@ -3,29 +3,36 @@ import threading
 import random
 import common_utils
 from common_utils import Message
+from common_utils import send_msg
 from time import sleep
+import json
+import struct
 
 class RaftConsensus:
     def __init__(self, pid, network_server_conn):
-        self.pid = pid
-        self.cluster = common_utils.get_cluster(pid)
-        self.connected_servers = common_utils.get_servers_in_cluster(self.cluster)
+        self.pid = int(pid)
+        self.cluster = common_utils.get_cluster(self.pid)
+        self.connected_servers = common_utils.get_servers_in_cluster(self.cluster, pid)
+        print(f"Connected servers: {self.connected_servers}")
         self.network_server_conn = network_server_conn
         self.quorum = (len(self.connected_servers) + 1) // 2 + 1
         # Start off as follower
         self.state = constants.RaftState.FOLLOWER
         self.term = 0
+        self.leader = None
         self.voted_for = None
+        self.votes = 0
         self.log = []
         self.commit_index = 0
         self.next_index = {}
         self.last_log_index = 0
         self.last_log_term = 0
+        
         # Initialize election timeout to some random value
-        self.election_timeout = random.random(3.0, 5.0);
+        self.election_timeout = random.uniform(3.0, 5.0);
         self.election_timer = threading.Timer(self.election_timeout, self.start_election)
         self.election_timer.start()
-        self.leader = None
+        
         # Lock to ensure only one thread updates the logs and vote count
         self.lock = threading.Lock()
         # TODO - maintain a thread for state machine
@@ -46,10 +53,12 @@ class RaftConsensus:
         while self.state == constants.RaftState.LEADER:
             for server in self.connected_servers:
                 # TODO - Heartbeat is basically append_entries with empty log
-                self.network_server_conn.sendall(Message(constants.MessageType.HEARTBEAT, server, self.term), "utf-8")
+                msg = Message(constants.MessageType.HEARTBEAT, server, self.term).get_message()
+                send_msg(self.network_server_conn, msg)
             sleep(0.5)
 
     def handle_message(self, msg):
+        print(f"Received message of tpye {msg['msg_type']}")
         if msg["msg_type"] == constants.MessageType.VOTE_REQUEST:
             self.handle_vote_request(msg)
         elif msg["msg_type"] == constants.MessageType.VOTE_RESPONSE:
@@ -80,7 +89,9 @@ class RaftConsensus:
 
     def send_vote_request(self):
         for server in self.connected_servers:
-            self.network_server_conn.sendall(Message(constants.MessageType.VOTE_REQUEST, self.term, self.pid, self.last_log_index, self.last_log_term, server), "utf-8")
+            msg = Message(constants.MessageType.VOTE_REQUEST, server, self.term, self.pid, self.last_log_index, self.last_log_term).get_message()
+            print(f"Sending vote request for term {self.term}")
+            send_msg(self.network_server_conn, msg)
 
     def handle_vote_request(self, msg):
         '''
@@ -100,10 +111,12 @@ class RaftConsensus:
             self.leader = sender_server_id
             # reset election timer
             self.reset_election_timer()
-            self.network_server_conn.sendall(Message(constants.MessageType.VOTE_RESPONSE, sender_server_id, self.term, vote=True), "utf-8")
+            msg = Message(constants.MessageType.VOTE_RESPONSE, sender_server_id, self.term, vote=True).get_message()
+            send_msg(self.network_server_conn, msg)
         else:
             # Reject vote and send term in response so that the sender can update its term
-            self.network_server_conn.sendall(Message(constants.MessageType.VOTE_RESPONSE, sender_server_id, self.term, vote=False), "utf-8")
+            msg = Message(constants.MessageType.VOTE_RESPONSE, sender_server_id, self.term, vote=False).get_message()
+            send_msg(self.network_server_conn, msg)
 
     def handle_vote_response(self, msg):
         '''
@@ -143,7 +156,8 @@ class RaftConsensus:
             self.log.append(msg)
             self.send_append_entries(msg)
         else:
-            self.network_server_conn.sendall(Message(constants.MessageType.CLIENT_REQUEST, self.leader), "utf-8")
+            msg = Message(constants.MessageType.CLIENT_REQUEST, self.leader).get_message()
+            send_msg(self.network_server_conn, msg)
         
     def send_append_entries(self, msg):
         '''

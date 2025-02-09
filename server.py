@@ -7,7 +7,32 @@ import socket
 import threading
 from sys import argv, stdout
 from os import _exit
-import common_utils
+from consensus_module import RaftConsensus
+from common_utils import send_msg
+import json
+
+def handle_server_msg(conn, data):
+    global server_socks
+
+    data = data.decode("utf-8").strip()  
+    msg_dict = json.loads(data)
+    
+    try:
+        raft.handle_message(msg_dict)
+    except:
+	    print("Exception in handling message from network server")
+
+def recv_msg(conn, addr):
+	while True:
+		try:
+			data = conn.recv(1024)
+		except:
+			break
+		if not data:
+			conn.close()
+			break
+        # Spawn new thread for every msg to ensure IO is non-blocking
+		threading.Thread(target=handle_server_msg, args=(conn, data)).start()
 
 def get_user_input():
     while True:
@@ -19,6 +44,7 @@ def get_user_input():
             stdout.flush()
 			# exit program with status 0
             _exit(0)
+
         # TODO - The below commands can be removed once the client is implemented
         elif cmd == "intra-shard":
             # intra-shard <from account> <to account> <amount>
@@ -27,6 +53,7 @@ def get_user_input():
             from_account = int(user_input.split()[1])
             to_account = int(user_input.split()[2])
             amount = int(user_input.split()[3])
+
         elif cmd == "inter-shard":
             # inter-shard <from account> <to account> <amount>
             # The balance for both accounts is stored in different clusters
@@ -35,7 +62,7 @@ def get_user_input():
 
 if __name__ == "__main__":
     
-    pid = argv[1]
+    pid = int(argv[1])
 
     SERVER_IP = socket.gethostname()
     SERVER_PORT = config.SERVER_PORTS[int(pid)]
@@ -50,6 +77,10 @@ if __name__ == "__main__":
     # Connect to network server
     network_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     network_sock.connect((SERVER_IP, config.NETWORK_SERVER_PORT))
-    threading.Thread(target=common_utils.recv_msg, args=(network_sock, (SERVER_IP, config.NETWORK_SERVER_PORT))).start()
+    threading.Thread(target=recv_msg, args=(network_sock, (SERVER_IP, config.NETWORK_SERVER_PORT))).start()
     # Send test message to network server
-    network_sock.send(f"Connected to server {pid}".encode())
+    msg = {"msg_type": "init", "node_id": pid}
+    send_msg(network_sock, msg)
+
+    # Create Raft consensus object for current server
+    raft = RaftConsensus(pid, network_sock)
