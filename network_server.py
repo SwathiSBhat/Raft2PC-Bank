@@ -4,13 +4,11 @@ The network server also provides the following commands:
 1. failNode <node_id> - This command will kill the server node with the given node_id.
 2. failLink <node_id1> <node_id2> - This command will kill the link between the two servers with the given node_id1 and node_id2.
 '''
-
 import socket
 from sys import stdout
 from os import _exit
 import threading
 from time import sleep
-import struct
 import config
 import json
 from common_utils import send_msg
@@ -19,8 +17,6 @@ server_socks = {}
 
 def handle_server_msg(conn, data):
     global server_socks
-
-    sleep(1)
 
     try:
         if data["msg_type"] == "init":

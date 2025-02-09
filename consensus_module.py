@@ -2,11 +2,8 @@ import constants
 import threading
 import random
 import common_utils
-from common_utils import Message
-from common_utils import send_msg
+from common_utils import Message, send_msg
 from time import sleep
-import json
-import struct
 
 class RaftConsensus:
     def __init__(self, pid, network_server_conn):
