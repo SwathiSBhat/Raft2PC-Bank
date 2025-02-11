@@ -11,28 +11,33 @@ from consensus_module import RaftConsensus
 from common_utils import send_msg
 import json
 
-def handle_server_msg(conn, data):
-    global server_socks
-
-    data = data.decode("utf-8").strip()  
-    msg_dict = json.loads(data)
-    
+def handle_server_msg(conn, data):    
+    data = json.loads(data)
     try:
-        raft.handle_message(msg_dict)
+        raft.handle_message(data)
     except:
 	    print("Exception in handling message from network server")
 
 def recv_msg(conn, addr):
-	while True:
-		try:
-			data = conn.recv(1024)
-		except:
-			break
-		if not data:
-			conn.close()
-			break
-        # Spawn new thread for every msg to ensure IO is non-blocking
-		threading.Thread(target=handle_server_msg, args=(conn, data)).start()
+    buffer = ""
+    while True:
+        try:
+            data = conn.recv(1024)
+        except:
+            break
+        if not data:
+            conn.close()
+            break
+        buffer += data.decode()
+
+        while "\n" in buffer:
+            msg, buffer = buffer.split("\n", 1)
+            try:
+                # Spawn new thread for every msg to ensure IO is non-blocking
+                threading.Thread(target=handle_server_msg, args=(conn, msg)).start()
+            except:
+                print("Exception in handling message at server {pid}")
+                break
 
 def get_user_input():
     while True:

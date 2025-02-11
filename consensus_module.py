@@ -4,6 +4,7 @@ import random
 import common_utils
 from common_utils import Message, send_msg
 from time import sleep
+import config
 
 class RaftConsensus:
     def __init__(self, pid, network_server_conn):
@@ -34,10 +35,25 @@ class RaftConsensus:
         self.lock = threading.Lock()
         # TODO - maintain a thread for state machine
 
+        self.write_to_disk()
+
+    def write_to_disk(self):
+        '''
+        Write current term, votedFor, log to disk
+        '''
+        filename = f'{config.FILEPATH}/server_{self.pid}.txt'
+        with open(filename, 'w+') as f:
+            f.write(f'{self.term}\n')
+            f.write(f'{self.voted_for}\n')
+            f.write(f'{self.log}\n')
+
     def reset_election_timer(self):
         self.election_timer.cancel()
         self.election_timer = threading.Timer(self.election_timeout, self.start_election)
         self.election_timer.start()
+    
+    def cancel_election_timer(self):
+        self.election_timer.cancel()
 
     def start_heartbeat_timer(self):
         threading.Thread(target=self.send_heartbeat).start()
@@ -55,7 +71,6 @@ class RaftConsensus:
             sleep(0.5)
 
     def handle_message(self, msg):
-        print(f"Received message of tpye {msg['msg_type']}")
         if msg["msg_type"] == constants.MessageType.VOTE_REQUEST:
             self.handle_vote_request(msg)
         elif msg["msg_type"] == constants.MessageType.VOTE_RESPONSE:
@@ -76,6 +91,10 @@ class RaftConsensus:
         Start election process by incrementing term and voting for self
         Send vote request to all servers
         '''
+        # If current state is leader, don't start election
+        # TODO - Make sure this doesn't cause problems
+        if self.state == constants.RaftState.LEADER:
+            return
         self.state = constants.RaftState.CANDIDATE
         self.term += 1
         self.voted_for = self.pid
@@ -83,11 +102,10 @@ class RaftConsensus:
         self.send_vote_request()
         self.reset_election_timer()
 
-
     def send_vote_request(self):
         for server in self.connected_servers:
             msg = Message(constants.MessageType.VOTE_REQUEST, server, self.term, self.pid, self.last_log_index, self.last_log_term).get_message()
-            print(f"Sending vote request for term {self.term}")
+            print(f"Sending vote request for term {self.term} to server {server}") 
             send_msg(self.network_server_conn, msg)
 
     def handle_vote_request(self, msg):
@@ -97,23 +115,25 @@ class RaftConsensus:
         and candidate's log is at least as complete as local log, grant vote and reset election timeout
         '''
         sender_server_id = msg["candidate_id"]
+        vote = False
 
         if msg["term"] > self.term or \
         ((msg["term"] == self.term and (self.voted_for is None or self.voted_for == sender_server_id)) and \
          (msg["last_log_index"] >= self.last_log_index and msg["last_log_term"] >= self.last_log_term)):
-            # vote for candidate
             self.state = constants.RaftState.FOLLOWER
             self.term = msg["term"]
             self.voted_for = sender_server_id
             self.leader = sender_server_id
-            # reset election timer
+            # TODO - reset election timer. Will need changes since heartbeat will also reset election timer
             self.reset_election_timer()
-            msg = Message(constants.MessageType.VOTE_RESPONSE, sender_server_id, self.term, vote=True).get_message()
-            send_msg(self.network_server_conn, msg)
+            vote = True
+            print(f"Voted for server {sender_server_id} in term {self.term}")
         else:
-            # Reject vote and send term in response so that the sender can update its term
-            msg = Message(constants.MessageType.VOTE_RESPONSE, sender_server_id, self.term, vote=False).get_message()
-            send_msg(self.network_server_conn, msg)
+            print(f"Rejected vote request from server {sender_server_id} for term {msg['term']}")
+
+        self.write_to_disk()
+        msg = Message(constants.MessageType.VOTE_RESPONSE, sender_server_id, self.term, vote=vote).get_message()
+        send_msg(self.network_server_conn, msg)
 
     def handle_vote_response(self, msg):
         '''
@@ -128,6 +148,7 @@ class RaftConsensus:
                     self.votes = 0
                     self.state = constants.RaftState.LEADER
                     self.leader = self.pid
+                    print(f"Server {self.pid} became leader in term {self.term}")
                     self.start_heartbeat_timer()
         else:
             # Update term if term in response is greater
@@ -138,11 +159,14 @@ class RaftConsensus:
                 self.leader = None
                 self.reset_election_timer()
 
+        self.write_to_disk()
+
     def handle_heartbeat(self, msg):
         '''
         If heartbeat received from leader, reset election timer
         '''
         # TODO - Check conditions for valid heartbeat
+        self.reset_election_timer()
 
     def handle_client_request(self, msg):
         '''
