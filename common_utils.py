@@ -10,7 +10,7 @@ def get_cluster(server_id):
 	4,5,6 -> 2
 	7,8,9 -> 3
 	'''
-	cluster = (server_id - 1) // 3
+	cluster = (server_id + 2) // 3
 	return cluster
 
 def get_servers_in_cluster(cluster, server_id=None):
@@ -20,7 +20,7 @@ def get_servers_in_cluster(cluster, server_id=None):
 	4,5,6 -> 2
 	7,8,9 -> 3
 	'''
-	start = cluster * 3 + 1
+	start = (cluster-1) * 3 + 1
 	end = start + 3
 	if server_id is not None:
 		servers = [i for i in range(start, end) if i != server_id]

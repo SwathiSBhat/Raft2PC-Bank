@@ -3,7 +3,8 @@ Gives commands to a server node part of a cluster.
 Client knows the mapping of account shards to server nodes.
 '''
 
-from sys import argv, stdout, _exit
+from sys import argv, stdout
+from os import _exit
 import socket
 import config
 import threading
@@ -41,7 +42,8 @@ def get_user_input():
 			# exit program with status 0
             _exit(0)
 
-        msg = {"msg_type" : "client_request", "command" : user_input, "client_id" : cid}
+        msg = {"msg_type" : "client_request_init", "command" : user_input, "client_id" : cid}
+        # print(f"Sending message to server: {msg}")
         send_msg(network_sock, msg)
 
 

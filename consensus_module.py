@@ -111,6 +111,7 @@ class RaftConsensus:
         If leader, append client request to log and send append entries to all servers
         Else, redirect client request to leader
         '''
+        print(f"Received client request: {msg}")
         if self.state == constants.RaftState.LEADER:
             self.send_append_entries(msg)
         else:
