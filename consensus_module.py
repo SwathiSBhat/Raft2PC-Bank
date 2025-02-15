@@ -2,7 +2,11 @@ import constants
 import threading
 import random
 import common_utils
-from common_utils import Message, send_msg
+from common_utils import ( 
+    send_msg, LogEntry, HeartbeatMessage, 
+    VoteResponseMessage, VoteRequestMessage, AppendEntriesMessage,
+    AppendEntriesResponseMessage
+)
 from time import sleep
 import config
 
@@ -66,7 +70,7 @@ class RaftConsensus:
         while self.state == constants.RaftState.LEADER:
             for server in self.connected_servers:
                 # TODO - Heartbeat is basically append_entries with empty log
-                msg = Message(constants.MessageType.HEARTBEAT, server, self.term).get_message()
+                msg = HeartbeatMessage(self.pid, server, self.term).get_message()
                 send_msg(self.network_server_conn, msg)
             sleep(0.5)
 
@@ -101,10 +105,27 @@ class RaftConsensus:
         self.votes = 1;
         self.send_vote_request()
         self.reset_election_timer()
+    
+    def handle_client_request(self, msg):
+        '''
+        If leader, append client request to log and send append entries to all servers
+        Else, redirect client request to leader
+        '''
+        if self.state == constants.RaftState.LEADER:
+            self.send_append_entries(msg)
+        else:
+            # Route to leader
+            msg["dest_id"] = self.leader
+            send_msg(self.network_server_conn, msg)
 
     def send_vote_request(self):
         for server in self.connected_servers:
-            msg = Message(constants.MessageType.VOTE_REQUEST, server, self.term, self.pid, self.last_log_index, self.last_log_term).get_message()
+            msg = VoteRequestMessage(
+                          self.term, 
+                          server, 
+                          self.pid, 
+                          self.last_log_index, 
+                          self.last_log_term).get_message()
             print(f"Sending vote request for term {self.term} to server {server}") 
             send_msg(self.network_server_conn, msg)
 
@@ -132,7 +153,7 @@ class RaftConsensus:
             print(f"Rejected vote request from server {sender_server_id} for term {msg['term']}")
 
         self.write_to_disk()
-        msg = Message(constants.MessageType.VOTE_RESPONSE, sender_server_id, self.term, vote=vote).get_message()
+        msg = VoteResponseMessage(sender_server_id, self.term, vote).get_message()
         send_msg(self.network_server_conn, msg)
 
     def handle_vote_response(self, msg):
@@ -149,6 +170,9 @@ class RaftConsensus:
                     self.state = constants.RaftState.LEADER
                     self.leader = self.pid
                     print(f"Server {self.pid} became leader in term {self.term}")
+                    # Set next_index for all servers to last log index + 1
+                    for server in self.connected_servers:
+                        self.next_index[server] = self.last_log_index + 1
                     self.start_heartbeat_timer()
         else:
             # Update term if term in response is greater
@@ -167,24 +191,28 @@ class RaftConsensus:
         '''
         # TODO - Check conditions for valid heartbeat
         self.reset_election_timer()
-
-    def handle_client_request(self, msg):
-        '''
-        If leader, append client request to log and send append entries to all servers
-        Else, redirect client request to leader
-        '''
-        if self.state == constants.RaftState.LEADER:
-            self.log.append(msg)
-            self.send_append_entries(msg)
-        else:
-            msg = Message(constants.MessageType.CLIENT_REQUEST, self.leader).get_message()
-            send_msg(self.network_server_conn, msg)
         
     def send_append_entries(self, msg):
         '''
         Invoked by leader to replicate log entries and discover inconsistencies
+        1. Append command to local log
+        2. Send append entries to all servers
         '''
-
+        with self.lock:
+                logEntry = LogEntry(self.term, msg["command"], self.last_log_index + 1, msg["candidate_id"])
+        self.log.append(logEntry)
+        for server in self.connected_servers:
+            msg = AppendEntriesMessage(
+                          server, 
+                          self.term, 
+                          self.pid, 
+                          self.last_log_index, 
+                          self.last_log_term, 
+                          [logEntry], 
+                          self.commit_index).get_message()
+            send_msg(self.network_server_conn, msg)
+        with self.lock:
+            self.last_log_index += 1
 
     def handle_append_entries(self, msg):
         '''
@@ -195,3 +223,16 @@ class RaftConsensus:
             Append any new entries not already in the log
             Advance state machine by applying newly committed entries
         '''
+        if msg["term"] < self.term:
+            msg = AppendEntriesResponseMessage(
+                    self.pid,
+                    self.term, 
+                    False).get_message()
+            send_msg(self.network_server_conn, msg)
+            return
+        elif msg["term"] > self.term:
+            self.state = constants.RaftState.FOLLOWER
+            self.term = msg["term"]
+            self.voted_for = None
+            self.leader = None
+            self.reset_election_timer()
