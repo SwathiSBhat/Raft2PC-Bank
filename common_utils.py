@@ -13,7 +13,7 @@ def get_cluster(server_id):
 	cluster = (server_id - 1) // 3
 	return cluster
 
-def get_servers_in_cluster(cluster, server_id):
+def get_servers_in_cluster(cluster, server_id=None):
 	'''
 	Return the servers part of cluster apart from the server itself
 	1,2,3 -> 1
@@ -22,7 +22,10 @@ def get_servers_in_cluster(cluster, server_id):
 	'''
 	start = cluster * 3 + 1
 	end = start + 3
-	servers = [i for i in range(start, end) if i != server_id]
+	if server_id is not None:
+		servers = [i for i in range(start, end) if i != server_id]
+	else:
+		servers = [i for i in range(start, end)]
 	return servers
 
 def send_msg(conn, msg):
@@ -120,8 +123,9 @@ class AppendEntriesMessage():
 		return msg
 	
 class AppendEntriesResponseMessage():
-	def __init__(self, sender_server_id, term, success):
+	def __init__(self, dest_id, sender_server_id, term, success):
 		self.term = term
+		self.dest_id = dest_id
 		self.sender_server_id = sender_server_id
 		self.success = success
 		self.msg_type = MessageType.APPEND_ENTRIES_RESPONSE
@@ -130,6 +134,7 @@ class AppendEntriesResponseMessage():
 		msg = {}
 		msg["msg_type"] = self.msg_type
 		msg["term"] = self.term
+		msg["dest_id"] = self.dest_id
 		msg["sender_server_id"] = self.sender_server_id
 		msg["success"] = self.success
 		return msg

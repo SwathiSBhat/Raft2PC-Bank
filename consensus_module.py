@@ -202,37 +202,125 @@ class RaftConsensus:
                 logEntry = LogEntry(self.term, msg["command"], self.last_log_index + 1, msg["candidate_id"])
         self.log.append(logEntry)
         for server in self.connected_servers:
+            # If prev_log_index >= next_index for server, send append entries
+            # with log entries starting at next_index for server
+            if self.next_index[server] >= len(self.log):
+                print(f"Server {server} has next_index {self.next_index[server]} greater than log length {len(self.log)}")
+                continue
+           
             msg = AppendEntriesMessage(
                           server, 
                           self.term, 
                           self.pid, 
-                          self.last_log_index, 
-                          self.last_log_term, 
-                          [logEntry], 
+                          # TODO - verify the below index and terms
+                          self.log[self.next_index[server] - 1].index, 
+                          self.log[self.next_index[server] - 1].term, 
+                          self.log[self.next_index[server]:], 
                           self.commit_index).get_message()
+
             send_msg(self.network_server_conn, msg)
         with self.lock:
             self.last_log_index += 1
 
     def handle_append_entries(self, msg):
         '''
-        If leader's term < current term, reject append entries and send term in response
-        If leader's term > current term, reset election timer, update term and step down to follower.
-            Return failure if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
-            If an existing entry conflicts with a new one, delete the existing entry and all that follow it
-            Append any new entries not already in the log
-            Advance state machine by applying newly committed entries
+        1. If leader's term < current term, reject append entries and send term in response
+        2. If leader's term > current term, reset election timer, update term and step down to follower.
+        3. Return failure if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
+        4. If an existing entry conflicts with a new one, delete the existing entry and all that follow it
+        5. Append any new entries not already in the log
+        6. Advance state machine by applying newly committed entries
         '''
+        leader = msg["leader_id"]
         if msg["term"] < self.term:
             msg = AppendEntriesResponseMessage(
+                    leader,
                     self.pid,
                     self.term, 
                     False).get_message()
             send_msg(self.network_server_conn, msg)
             return
         elif msg["term"] > self.term:
-            self.state = constants.RaftState.FOLLOWER
             self.term = msg["term"]
             self.voted_for = None
-            self.leader = None
-            self.reset_election_timer()
+        
+        # If candidate or leader, step down to follower
+        if self.state == constants.RaftState.CANDIDATE or self.state == constants.RaftState.LEADER:
+            self.state = constants.RaftState.FOLLOWER
+            self.leader = leader
+
+        self.reset_election_timer()
+
+        # Check if log contains an entry at prevLogIndex whose term matches prevLogTerm
+        if msg["prev_log_index"] >= len(self.log) or \
+        self.log[msg["prev_log_index"]].term != msg["prev_log_term"]:
+            msg = AppendEntriesResponseMessage(
+                    leader,
+                    self.pid,
+                    self.term, 
+                    False).get_message()
+            send_msg(self.network_server_conn, msg)
+            return
+        
+        # If an existing entry conflicts with a new one, delete the existing entry and all that follow it
+        # Return failure and leader will decrement nextIndex and retry
+        if msg["prev_log_index"] + 1 < len(self.log) and \
+        self.log[msg["prev_log_index"] + 1].term != msg["entries"][0].term:
+            msg = AppendEntriesResponseMessage(
+                    leader,
+                    self.pid,
+                    self.term, 
+                    False).get_message()
+            send_msg(self.network_server_conn, msg)
+            return
+        
+        # Append any new entries not already in the log
+        self.log = self.log[:msg["prev_log_index"] + 1] + msg["entries"]
+        # Advance state machine by applying newly committed entries
+        # TODO - Apply state machine
+        self.commit_index = msg["commit_index"]
+        msg = AppendEntriesResponseMessage(
+                leader,
+                self.pid,
+                self.term, 
+                True).get_message()
+        send_msg(self.network_server_conn, msg)
+        self.write_to_disk()
+        print(f"Server {self.pid} log: {self.log}")
+        print(f"Server {self.pid} commit index: {self.commit_index}")
+        print(f"Server {self.pid} term: {self.term}")
+        print(f"Server {self.pid} state: {self.state}")
+
+    def handle_append_entries_response(self, msg):
+        '''
+        1. If response is successful, update nextIndex and matchIndex for follower
+        2. If response is not successful, decrement nextIndex and retry
+        '''
+        if msg["success"]:
+            # Update nextIndex for follower
+            self.next_index[msg["sender_server_id"]] += 1
+            # Mark log entry as committed if it is stored in majority of servers
+            # and atleast 1 entry of current term is stored in majority of servers
+            # For the first entry of current term, commit it only after the next entry is stored in a majority 
+            # of servers
+            # TODO - Implement this
+        else:
+            if msg["term"] > self.term:
+                self.term = msg["term"]
+                self.state = constants.RaftState.FOLLOWER
+                self.voted_for = None
+                self.leader = None
+                self.reset_election_timer()
+            else:
+                # Decrement nextIndex and send append entries again
+                self.next_index[msg["sender_server_id"]] -= 1
+                self.send_append_entries()
+        
+        self.write_to_disk()
+
+    def read_from_disk(self):
+        '''
+        Read current term, votedFor, log from disk
+        '''
+        filename = f'{config.FILEPATH}/server_{self.pid}.txt'
+        # TODO - Read log from disk and load in correct LogEntry format

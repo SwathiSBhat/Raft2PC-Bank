@@ -11,19 +11,89 @@ import threading
 from time import sleep
 import config
 import json
-from common_utils import send_msg
+from common_utils import send_msg, get_servers_in_cluster, MessageType, ClientRequestMessage
+import random
 
 server_socks = {}
+client_socks = {}
+alive_servers = {};
+
+def forward_msg(data):
+    global server_socks
+    global alive_servers
+
+    '''
+    The command is of the form: <from_account>,<to_account>,<amount>
+    Mapping of account id to clusters:
+    1-1000 => cluster 1 (servers 1,2,3)
+    1001-2000 => cluster 2 (servers 4,5,6)
+    2001-3000 => cluster 3 (servers 7,8,9)
+    '''
+    command = data["command"]
+    from_account = int(command.split(",")[0])
+    to_account = int(command.split(",")[1])
+    amount = float(command.split(",")[2])
+    
+    from_cluster = (from_account - 1) // 1000
+    to_cluster = (to_account - 1) // 1000
+    
+    if from_cluster == to_cluster:
+        # intra-shard
+        # create CLIENT_REQUEST message to random alive server in the cluster
+        # send the message to the server
+        dest_id = random.choice(get_servers_in_cluster(from_cluster))
+        while alive_servers[dest_id] == False:
+            dest_id = random.choice(get_servers_in_cluster(from_cluster))
+
+        msg = ClientRequestMessage(command, data["client_id"], dest_id)
+        send_msg(server_socks[dest_id], msg.get_message())
+    
+    else:
+        # inter-shard
+        # create CLIENT_REQUEST message to random alive server in the cluster
+        # send the message to the server
+        dest_id1 = random.choice(get_servers_in_cluster(from_cluster))
+        while alive_servers[dest_id1] == False:
+            dest_id1 = random.choice(get_servers_in_cluster(from_cluster))
+
+        dest_id2 = random.choice(get_servers_in_cluster(to_cluster))
+        while alive_servers[dest_id2] == False:
+            dest_id2 = random.choice(get_servers_in_cluster(to_cluster))
+
+        msg = ClientRequestMessage(command, data["client_id"], dest_id1)
+        send_msg(server_socks[dest_id1], msg.get_message())
+        msg = ClientRequestMessage(command, data["client_id"], dest_id2)
+        send_msg(server_socks[dest_id2], msg.get_message())
+
 
 def handle_server_msg(conn, data):
     global server_socks
+    global client_socks
+    global alive_servers
 
     try:
         if data["msg_type"] == "init":
             # Init: Connected to server <node_id>
             node_id = int(data["node_id"])
             server_socks[node_id] = conn
+            alive_servers[node_id] = True
             print(f"Connected to server {node_id}")
+
+        elif data["msg_type"] == "init_client":
+            # Init: Connected to client <client_id>
+            client_id = int(data["client_id"])
+            print(f"Connected to client {client_id}")
+
+        elif data["msg_type"] == "client_request":
+            # Forward request to any random alive server in the cluster
+            forward_msg(data)
+
+        elif data["msg_type"] == "server_exit":
+            # Server exit: Server <node_id> has exited
+            node_id = int(data["node_id"])
+            alive_servers[node_id] = False
+            print(f"Server {node_id} has exited")
+            
         # Forward message to destination server in the cluster
         else:
             dest_id = data["dest_id"]

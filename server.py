@@ -46,6 +46,9 @@ def get_user_input():
         cmd = user_input.split()[0]
 
         if cmd == "exit":
+            # send msg to network server about exit so that it can be marked as down
+            msg = {"msg_type": "server_exit", "node_id": pid}
+            send_msg(network_sock, msg)
             stdout.flush()
 			# exit program with status 0
             _exit(0)
