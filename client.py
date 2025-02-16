@@ -28,7 +28,7 @@ def recv_msg(conn, addr):
             # Spawn new thread for every msg to ensure IO is non-blocking
             threading.Thread(target=handle_server_msg, args=(conn, msg)).start()
         except:
-            print("Exception in handling message at server {pid}")
+            print("Exception in handling message at client {pid}")
             break
 
 def get_user_input():
