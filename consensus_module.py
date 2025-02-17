@@ -38,8 +38,6 @@ class RaftConsensus:
         self.last_log_writtern_disk=0
         # Initialize election timeout to some random value
         self.election_timeout = random.uniform(3.0, 5.0);
-        #self.election_timer = threading.Timer(self.election_timeout, self.start_election)
-        # self.election_timer.start()
         
         # Lock to ensure only one thread updates the logs and vote count
         self.lock = threading.Lock()
@@ -47,7 +45,7 @@ class RaftConsensus:
         #self.state_machine_lock = threading.Lock()
         self.conditional_lock_state_machine = threading.Condition()
         self.processing_ids = defaultdict(int)
-        # TODO - maintain a thread for state machine
+
         self.read_from_disk()
         self.write_to_disk()
 
@@ -87,25 +85,11 @@ class RaftConsensus:
 
         if(self.last_log_writtern_disk<len(self.log)):
             with self.write_log_lock:
-                print(os.path.getsize(filename) , " :: total length")
+                #print(os.path.getsize(filename) , " :: total length")
                 with open(filename, 'r+') as file:
                     file.write(f"{self.commit_index}\n")
-                    # Calculate the position in the file where we need to start writing
-                    #size_to_seek = self.calculate_size_of_objects()+file.tell()
-                    #print(size_to_seek,self.last_log_writtern_disk ,self.log," size befor writting to disk" )
-                    #print(json.load(file))
-                    #if(size_to_seek>0):
-                    #    size_to_seek+=1
-                    #file.seek(size_to_seek)
-                    #stIndex=1
-                    #if(size_to_seek==0):
-                    #     stIndex=0
-                    #new_data = [obj.to_json() for obj in self.log[self.last_log_writtern_disk:]]
                     new_data = [obj.to_json() for obj in self.log]
                     temp=json.dumps(new_data)
-                    # if(size_to_seek!=0):
-                    #     temp=", "+temp[1:]
-                    #print(temp, " appending data")
 
                     file.write(temp)  
                 self.last_log_writtern_disk=len(self.log)
@@ -287,7 +271,7 @@ class RaftConsensus:
         2. Send append entries to all servers
         '''
         cmd = list(map(int,msg["command"].split(",")))
-        print(cmd ,msg , " : cmd value")
+        #print(cmd ,msg , " : cmd value")
         with self.conditional_lock_state_machine:
             while(self.processing_ids[cmd[0]] !=0 and self.processing_ids[cmd[1]]!=0):
                 self.conditional_lock_state_machine.wait()
@@ -329,7 +313,7 @@ class RaftConsensus:
                           self.log[self.next_index[server] - 1].term, 
                           self.log[self.next_index[server]:], 
                           self.commit_index).get_message()
-            print(msg , " check before sending")
+            #print(msg , " check before sending")
             send_msg(self.network_server_conn, msg)
         with self.lock:
             self.last_log_index += 1
@@ -377,28 +361,11 @@ class RaftConsensus:
             send_msg(self.network_server_conn, msg)
             return
         
-        # If an existing entry conflicts with a new one, delete the existing entry and all that follow it
-        # Return failure and leader will decrement nextIndex and retry
-        #decreasedIndex=0
-        #while(msg["prev_log_index"] + 1 < len(self.log)):
-        #    self.log.pop()
-        # if msg["prev_log_index"] + 1 < len(self.log) and \
-        # self.log[msg["prev_log_index"] + 1].term != msg["entries"][0].term:
-        #     msg = AppendEntriesResponseMessage(
-        #             leader,
-        #             self.pid,
-        #             self.term, 
-        #             False).get_message()
-        #     send_msg(self.network_server_conn, msg)
-        #     return
-        
         # Append any new entries not already in the log
         self.log = self.log[:msg["prev_log_index"] + 1] + [LogEntry.from_dict(i) for  i in msg["entries"]]
         # Advance state machine by applying newly committed entries
-        # TODO - Apply state machine
         #self.commit_index = msg["commit_index"]
         with self.lock:
-            print(msg,self.commit_index , " new commits for updates")
             for i in range(self.commit_index+1,msg["commit_index"]+1):
                 log_entry = self.log[i]
                 cmd=list(map(int,log_entry.command.split(",")))
@@ -448,9 +415,7 @@ class RaftConsensus:
         1. If response is successful, update nextIndex and matchIndex for follower
         2. If response is not successful, decrement nextIndex and retry
         '''
-        print(msg, " inside handle_append_entries_response")
         if msg["success"]:
-            print(msg , " committing the log till this term")
             # Update nextIndex for follower
             # self.next_index[msg["sender_server_id"]] += 1
             # Mark log entry as committed if it is stored in majority of servers
@@ -489,7 +454,7 @@ class RaftConsensus:
                         self.state_machine_write(cmd[1],amt + cmd[2])  
                         self.processing_ids[cmd[0]]-=1
                         self.processing_ids[cmd[1]]-=1
-                        print(self.processing_ids)
+                        #print(self.processing_ids)
                         with self.conditional_lock_state_machine:
                             self.conditional_lock_state_machine.notify_all()
                 
@@ -498,11 +463,10 @@ class RaftConsensus:
                                        self.pid,
                                        log_entry.client_id,
                                        True).get_message()
-                    print(msg1 , " this is the message been sent")
                     send_msg(self.network_server_conn, msg1)
                 if(msg["approve_index"]>self.commit_index):
                     self.commit_index += (msg["approve_index"]-self.commit_index)
-                print(self.log, self.commit_index, msg, " done with commiting")
+                print("commitID: ",self.commit_index, " done  committing")
                 
                                 
         else:
@@ -547,7 +511,7 @@ class RaftConsensus:
                 self.last_log_writtern_disk=len(self.log)
                 self.term=self.log[-1].term
                 self.last_log_index = self.log[-1].index
-        print( self.commit_index, self.log, self.term, self.last_log_index , " all these are updated from disk")
+        #print( self.commit_index, self.log, self.term, self.last_log_index , " all these are updated from disk")
     
 
     def state_machine_read(self, row_id):
@@ -556,22 +520,13 @@ class RaftConsensus:
         '''
         filename = f'{config.FILEPATH}/stateMachine_{self.pid}.txt'
         # TODO - write more optimal solution because below loop over to find the offset
-        print("read request is ", row_id)
+        #print("read request is ", row_id)
         try:
             with open(filename, 'r+b') as file:
-                # current_line = 1
-                # while current_line < row_id:
-                #     t=file.readline()
-                #     print(t , " row read\n")  
-                #     current_line += 1
-
-                # row = file.readline()
-                # print(row , " row read\n")
-                # value = int(row.split()[1])
                 file.seek((row_id-1) * 16)
                 row = struct.unpack('qq', file.read(16))
                 #value = struct.unpack('q', file.read(8))[0]
-                print(row ," row read")
+                #print(row ," row read")
                 value = row[1]#int(row.split()[1])
                 
                 return value
@@ -588,7 +543,7 @@ class RaftConsensus:
         #'''
         filename = f'{config.FILEPATH}/stateMachine_{self.pid}.txt'
         # TODO - Read log from disk and load in correct LogEntry format
-        print(row_id,val , " write these values\n\n")
+        #print(row_id,val , " write these values\n\n")
         if not os.path.exists(filename):
             #data = np.random.randint(0, 100, size=100, dtype=np.int64)
             with open(filename, 'wb') as file:
@@ -599,26 +554,6 @@ class RaftConsensus:
         if(val):
             with open(filename, 'r+b') as file:
                 offset = 0
-
-                # for _ in range(1, row_id):
-                #     line = file.readline()  
-                #     offset += len(line) 
-
-                # file.seek(offset)
-                # actual_line=file.readline()
-                # actual_curr_len = len(actual_line)
-                # file.seek(offset)
-                # new_line = f"{row_id} {val}\n"
-                # file.write(new_line.encode('utf-8'))
-                # #actual_line=file.readline()
-                # #print(new_line, actual_line, len(new_line), len(actual_line), " compare length after write")
-                # # if 0 < len(actual_line):
-                # #     file.truncate() 
-                # current_end_position = file.tell()
-                # print(new_line, actual_line, len(new_line), len(actual_line), current_end_position, " compare length after write")
-                # if current_end_position < offset + actual_curr_len:
-                #     file.write(b' ' * (actual_curr_len - (current_end_position - offset)))
-                # print(f"Updated row {row_id} with value {val}.")
                 file.seek((row_id-1) * 16)
                 file.write(struct.pack('qq', np.int64(row_id),np.int64(val)))
 
