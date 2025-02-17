@@ -2,10 +2,15 @@ import constants
 import threading
 import random
 import common_utils
+import os
+import json
+import struct
+from collections import defaultdict
+import numpy as np
 from common_utils import ( 
     send_msg, LogEntry, HeartbeatMessage, 
     VoteResponseMessage, VoteRequestMessage, AppendEntriesMessage,
-    AppendEntriesResponseMessage
+    AppendEntriesResponseMessage, ClientResponseMessage
 )
 from time import sleep
 import config
@@ -24,32 +29,90 @@ class RaftConsensus:
         self.leader = None
         self.voted_for = None
         self.votes = 0
-        self.log = []
         self.commit_index = 0
         self.next_index = {}
+        self.server_commit_index = {}
         self.last_log_index = 0
         self.last_log_term = 0
-        
+        self.log = [LogEntry(self.term, "", self.last_log_index, -1)]
+        self.last_log_writtern_disk=0
         # Initialize election timeout to some random value
         self.election_timeout = random.uniform(3.0, 5.0);
-        self.election_timer = threading.Timer(self.election_timeout, self.start_election)
-        self.election_timer.start()
+        #self.election_timer = threading.Timer(self.election_timeout, self.start_election)
+        # self.election_timer.start()
         
         # Lock to ensure only one thread updates the logs and vote count
         self.lock = threading.Lock()
+        self.write_log_lock = threading.Lock()
+        #self.state_machine_lock = threading.Lock()
+        self.conditional_lock_state_machine = threading.Condition()
+        self.processing_ids = defaultdict(int)
         # TODO - maintain a thread for state machine
-
+        self.read_from_disk()
         self.write_to_disk()
 
+        self.state_machine_write(1)
+
+        self.election_timer = threading.Timer(self.election_timeout, self.start_election)
+        self.election_timer.start()
+        #print(self.state_machine_read(1))
+        #print(self.state_machine_read(10))
+
+
+    # Function to compute the size of the serialized objects up to a given index
+    def calculate_size_of_objects(self):
+        # Serialize the objects up to the given index and calculate their byte size
+        data = json.dumps([obj.to_json() for obj in self.log[:self.last_log_writtern_disk]])  # Convert objects to JSON
+        print(data , " calculated data")
+        return len(data.encode('utf-8'))-1  # Return the byte size
+    
     def write_to_disk(self):
         '''
         Write current term, votedFor, log to disk
         '''
+        #TODO  can we optimise it more?? because currently writing all the log file again even unmodified once but instead need to write only modified one
         filename = f'{config.FILEPATH}/server_{self.pid}.txt'
-        with open(filename, 'w+') as f:
-            f.write(f'{self.term}\n')
-            f.write(f'{self.voted_for}\n')
-            f.write(f'{self.log}\n')
+        # If file doesn't exist, create it and write the first batch of data
+        with self.write_log_lock:
+            if not os.path.exists(filename):
+                
+                with open(filename, 'w') as file:
+                    new_data = [obj.to_json() for obj in self.log]
+                    file.write(f"{self.commit_index}\n")
+                    file.write(json.dumps(new_data))#[1:-1])
+                    print(file.tell() , " last written index")
+                    #json.dump([obj.to_json() for obj in self.log], file)
+                    self.last_log_writtern_disk=len(self.log)
+                return
+
+        if(self.last_log_writtern_disk<len(self.log)):
+            with self.write_log_lock:
+                print(os.path.getsize(filename) , " :: total length")
+                with open(filename, 'r+') as file:
+                    file.write(f"{self.commit_index}\n")
+                    # Calculate the position in the file where we need to start writing
+                    #size_to_seek = self.calculate_size_of_objects()+file.tell()
+                    #print(size_to_seek,self.last_log_writtern_disk ,self.log," size befor writting to disk" )
+                    #print(json.load(file))
+                    #if(size_to_seek>0):
+                    #    size_to_seek+=1
+                    #file.seek(size_to_seek)
+                    #stIndex=1
+                    #if(size_to_seek==0):
+                    #     stIndex=0
+                    #new_data = [obj.to_json() for obj in self.log[self.last_log_writtern_disk:]]
+                    new_data = [obj.to_json() for obj in self.log]
+                    temp=json.dumps(new_data)
+                    # if(size_to_seek!=0):
+                    #     temp=", "+temp[1:]
+                    #print(temp, " appending data")
+
+                    file.write(temp)  
+                self.last_log_writtern_disk=len(self.log)
+        else:
+            with self.write_log_lock:
+                with open(filename, 'r+') as file:
+                    file.write(f"{self.commit_index}\n")
 
     def reset_election_timer(self):
         self.election_timer.cancel()
@@ -70,8 +133,22 @@ class RaftConsensus:
         while self.state == constants.RaftState.LEADER:
             for server in self.connected_servers:
                 # TODO - Heartbeat is basically append_entries with empty log
-                msg = HeartbeatMessage(self.pid, server, self.term).get_message()
-                send_msg(self.network_server_conn, msg)
+                if(self.server_commit_index[server]>=self.commit_index):
+                    msg = HeartbeatMessage(self.pid, server, self.term).get_message()
+                    send_msg(self.network_server_conn, msg)
+                else:
+                    #self.next_index[msg["sender_server_id"]] -= 1
+                    #self.send_append_entries(msg)
+                    #server = msg['sender_server_id']
+                    msg = AppendEntriesMessage(
+                            server, 
+                            self.term, 
+                            self.pid, 
+                            self.log[self.next_index[server] - 1].index, 
+                            self.log[self.next_index[server] - 1].term, 
+                            self.log[self.next_index[server]:], 
+                            self.commit_index).get_message()
+                    send_msg(self.network_server_conn, msg)
             sleep(0.5)
 
     def handle_message(self, msg):
@@ -111,10 +188,11 @@ class RaftConsensus:
         If leader, append client request to log and send append entries to all servers
         Else, redirect client request to leader
         '''
-        print(f"Received client request: {msg}")
+        print(f"Received client request: {msg},  leader: {self.leader}")
         if self.state == constants.RaftState.LEADER:
             self.send_append_entries(msg)
         else:
+            #TODO - if it doesnot know the leader then?? do we need to do election??
             # Route to leader
             msg["dest_id"] = self.leader
             send_msg(self.network_server_conn, msg)
@@ -154,7 +232,7 @@ class RaftConsensus:
             print(f"Rejected vote request from server {sender_server_id} for term {msg['term']}")
 
         self.write_to_disk()
-        msg = VoteResponseMessage(sender_server_id, self.term, vote).get_message()
+        msg = VoteResponseMessage(sender_server_id, self.term, vote, self.commit_index).get_message()
         send_msg(self.network_server_conn, msg)
 
     def handle_vote_response(self, msg):
@@ -171,9 +249,17 @@ class RaftConsensus:
                     self.state = constants.RaftState.LEADER
                     self.leader = self.pid
                     print(f"Server {self.pid} became leader in term {self.term}")
+                    #acquire lock to all the pending commits 
+                    for i in range(self.commit_index+1,len(self.log)):
+                        log_entry = self.log[i]
+                        cmd=list(map(int,log_entry.command.split(",")))
+                        with self.conditional_lock_state_machine:
+                            self.processing_ids[cmd[0]]+=1
+                            self.processing_ids[cmd[1]]+=1 
                     # Set next_index for all servers to last log index + 1
                     for server in self.connected_servers:
                         self.next_index[server] = self.last_log_index + 1
+                        self.server_commit_index[server] = msg["sender_commit_index"]
                     self.start_heartbeat_timer()
         else:
             # Update term if term in response is greater
@@ -191,6 +277,7 @@ class RaftConsensus:
         If heartbeat received from leader, reset election timer
         '''
         # TODO - Check conditions for valid heartbeat
+        self.leader= msg["sender_server_id"]
         self.reset_election_timer()
         
     def send_append_entries(self, msg):
@@ -199,15 +286,39 @@ class RaftConsensus:
         1. Append command to local log
         2. Send append entries to all servers
         '''
+        cmd = list(map(int,msg["command"].split(",")))
+        print(cmd ,msg , " : cmd value")
+        with self.conditional_lock_state_machine:
+            while(self.processing_ids[cmd[0]] !=0 and self.processing_ids[cmd[1]]!=0):
+                self.conditional_lock_state_machine.wait()
+            self.processing_ids[cmd[0]]=1
+            self.processing_ids[cmd[1]]=1 
+        
+        amt = self.state_machine_read(cmd[0])
+        if(amt<cmd[2]):
+            msg= ClientResponseMessage(msg["command"],
+                                       self.pid,
+                                       msg["client_id"],
+                                       False).get_message()
+            self.processing_ids[cmd[0]]=0
+            self.processing_ids[cmd[1]]=0
+            with self.conditional_lock_state_machine:
+                self.conditional_lock_state_machine.notify_all() 
+            print("FAILED Transaction because of insufficient balance: ", amt , " for transaction: ",msg["command"])
+            send_msg(self.network_server_conn, msg)
+            return 
+
         with self.lock:
-                logEntry = LogEntry(self.term, msg["command"], self.last_log_index + 1, msg["candidate_id"])
+                logEntry = LogEntry(self.term, msg["command"], self.last_log_index + 1, msg["client_id"])
         self.log.append(logEntry)
         for server in self.connected_servers:
             # If prev_log_index >= next_index for server, send append entries
             # with log entries starting at next_index for server
-            if self.next_index[server] >= len(self.log):
-                print(f"Server {server} has next_index {self.next_index[server]} greater than log length {len(self.log)}")
-                continue
+            
+            ##TODO check the below condition is required or not
+            #if self.next_index[server] >= len(self.log):
+            #    print(f"Server {server} has next_index {self.next_index[server]} greater than log length {len(self.log)}")
+            #    continue
            
             msg = AppendEntriesMessage(
                           server, 
@@ -218,7 +329,7 @@ class RaftConsensus:
                           self.log[self.next_index[server] - 1].term, 
                           self.log[self.next_index[server]:], 
                           self.commit_index).get_message()
-
+            print(msg , " check before sending")
             send_msg(self.network_server_conn, msg)
         with self.lock:
             self.last_log_index += 1
@@ -238,6 +349,8 @@ class RaftConsensus:
                     leader,
                     self.pid,
                     self.term, 
+                    self.log[-1].index,
+                    self.commit_index,
                     False).get_message()
             send_msg(self.network_server_conn, msg)
             return
@@ -251,7 +364,6 @@ class RaftConsensus:
             self.leader = leader
 
         self.reset_election_timer()
-
         # Check if log contains an entry at prevLogIndex whose term matches prevLogTerm
         if msg["prev_log_index"] >= len(self.log) or \
         self.log[msg["prev_log_index"]].term != msg["prev_log_term"]:
@@ -259,34 +371,73 @@ class RaftConsensus:
                     leader,
                     self.pid,
                     self.term, 
+                    self.log[-1].index,
+                    self.commit_index,
                     False).get_message()
             send_msg(self.network_server_conn, msg)
             return
         
         # If an existing entry conflicts with a new one, delete the existing entry and all that follow it
         # Return failure and leader will decrement nextIndex and retry
-        if msg["prev_log_index"] + 1 < len(self.log) and \
-        self.log[msg["prev_log_index"] + 1].term != msg["entries"][0].term:
-            msg = AppendEntriesResponseMessage(
-                    leader,
-                    self.pid,
-                    self.term, 
-                    False).get_message()
-            send_msg(self.network_server_conn, msg)
-            return
+        #decreasedIndex=0
+        #while(msg["prev_log_index"] + 1 < len(self.log)):
+        #    self.log.pop()
+        # if msg["prev_log_index"] + 1 < len(self.log) and \
+        # self.log[msg["prev_log_index"] + 1].term != msg["entries"][0].term:
+        #     msg = AppendEntriesResponseMessage(
+        #             leader,
+        #             self.pid,
+        #             self.term, 
+        #             False).get_message()
+        #     send_msg(self.network_server_conn, msg)
+        #     return
         
         # Append any new entries not already in the log
-        self.log = self.log[:msg["prev_log_index"] + 1] + msg["entries"]
+        self.log = self.log[:msg["prev_log_index"] + 1] + [LogEntry.from_dict(i) for  i in msg["entries"]]
         # Advance state machine by applying newly committed entries
         # TODO - Apply state machine
-        self.commit_index = msg["commit_index"]
+        #self.commit_index = msg["commit_index"]
+        with self.lock:
+            print(msg,self.commit_index , " new commits for updates")
+            for i in range(self.commit_index+1,msg["commit_index"]+1):
+                log_entry = self.log[i]
+                cmd=list(map(int,log_entry.command.split(",")))
+                with self.conditional_lock_state_machine:
+                    #TODO - check if this wait is required?? 
+                    while(self.processing_ids[cmd[0]] !=0 and self.processing_ids[cmd[1]]!=0):
+                        self.conditional_lock_state_machine.wait()
+                    self.processing_ids[cmd[0]]=1
+                    self.processing_ids[cmd[1]]=1 
+                amt = self.state_machine_read(cmd[0])
+                if(amt<cmd[2]):
+                    self.processing_ids[cmd[0]]-=1
+                    self.processing_ids[cmd[1]]-=1
+                    with self.conditional_lock_state_machine:
+                        self.conditional_lock_state_machine.notify_all()
+                    print("Something has gone wrong PLEASE CHECK!!!!: balance amount is low ", amt , " for transaction: ",log_entry.command)
+                    raise ValueError(f"Something has gone wrong PLEASE CHECK!!!!: balance amount is low {amt} for transaction: {log_entry.command}")
+                else:
+                    self.state_machine_write(cmd[0],amt - cmd[2])
+                    amt = self.state_machine_read(cmd[1])
+                    self.state_machine_write(cmd[1],amt + cmd[2])  
+                    self.processing_ids[cmd[0]]-=1
+                    self.processing_ids[cmd[1]]-=1
+                    with self.conditional_lock_state_machine:
+                        self.conditional_lock_state_machine.notify_all()
+            
+            self.commit_index += (msg["commit_index"]-self.commit_index)
+            self.write_to_disk()
+            self.last_log_index = self.log[-1].index
+
         msg = AppendEntriesResponseMessage(
                 leader,
                 self.pid,
                 self.term, 
+                self.log[-1].index,
+                self.commit_index,
                 True).get_message()
         send_msg(self.network_server_conn, msg)
-        self.write_to_disk()
+        # self.write_to_disk()
         print(f"Server {self.pid} log: {self.log}")
         print(f"Server {self.pid} commit index: {self.commit_index}")
         print(f"Server {self.pid} term: {self.term}")
@@ -297,14 +448,63 @@ class RaftConsensus:
         1. If response is successful, update nextIndex and matchIndex for follower
         2. If response is not successful, decrement nextIndex and retry
         '''
+        print(msg, " inside handle_append_entries_response")
         if msg["success"]:
+            print(msg , " committing the log till this term")
             # Update nextIndex for follower
-            self.next_index[msg["sender_server_id"]] += 1
+            # self.next_index[msg["sender_server_id"]] += 1
             # Mark log entry as committed if it is stored in majority of servers
             # and atleast 1 entry of current term is stored in majority of servers
             # For the first entry of current term, commit it only after the next entry is stored in a majority 
             # of servers
             # TODO - Implement this
+            #since we have only 3 servers in cluster this should work 
+            #NOTE below will not work if there are more then 3 server in a cluster
+            #self.commit_index+=1
+            #TODO - check if the lock can be removed , (thinking:: whether two concurrent success then we should not commit twice)
+            with self.lock:
+                if(self.next_index[msg["sender_server_id"]]<msg["approve_index"]+1):
+                    self.next_index[msg["sender_server_id"]] = msg["approve_index"]+1 #TODO -check if its correct
+                if(self.server_commit_index[msg["sender_server_id"]]< msg["sender_commit_index"]):
+                    self.server_commit_index[msg["sender_server_id"]] = msg["sender_commit_index"]
+                for i in range(self.commit_index+1,msg["approve_index"]+1):
+                    log_entry = self.log[i]
+                    cmd=list(map(int,log_entry.command.split(",")))
+                    # with self.conditional_lock_state_machine:
+                    #     while(self.processing_ids[cmd[0]] !=0 and self.processing_ids[cmd[1]]!=0):
+                    #         self.conditional_lock_state_machine.wait()
+                    #     self.processing_ids[cmd[0]]=1
+                    #     self.processing_ids[cmd[1]]=1 
+                    amt = self.state_machine_read(cmd[0])
+                    if(amt<cmd[2]):
+                        self.processing_ids[cmd[0]]-=1
+                        self.processing_ids[cmd[1]]-=1
+                        with self.conditional_lock_state_machine:
+                            self.conditional_lock_state_machine.notify_all()
+                        print("Something has gone wrong PLEASE CHECK!!!!: balance amount is low ", amt , " for transaction: ",msg["command"])
+                        raise ValueError(f"Something has gone wrong PLEASE CHECK!!!!: balance amount is low {amt} for transaction: {msg["command"]}")
+                    else:
+                        self.state_machine_write(cmd[0],amt - cmd[2])
+                        amt = self.state_machine_read(cmd[1])
+                        self.state_machine_write(cmd[1],amt + cmd[2])  
+                        self.processing_ids[cmd[0]]-=1
+                        self.processing_ids[cmd[1]]-=1
+                        print(self.processing_ids)
+                        with self.conditional_lock_state_machine:
+                            self.conditional_lock_state_machine.notify_all()
+                
+                    
+                    msg1= ClientResponseMessage(log_entry.command,
+                                       self.pid,
+                                       log_entry.client_id,
+                                       True).get_message()
+                    print(msg1 , " this is the message been sent")
+                    send_msg(self.network_server_conn, msg1)
+                if(msg["approve_index"]>self.commit_index):
+                    self.commit_index += (msg["approve_index"]-self.commit_index)
+                print(self.log, self.commit_index, msg, " done with commiting")
+                
+                                
         else:
             if msg["term"] > self.term:
                 self.term = msg["term"]
@@ -315,9 +515,21 @@ class RaftConsensus:
             else:
                 # Decrement nextIndex and send append entries again
                 self.next_index[msg["sender_server_id"]] -= 1
-                self.send_append_entries()
-        
+                #self.send_append_entries(msg)
+                server = msg['sender_server_id']
+                msg = AppendEntriesMessage(
+                          server, 
+                          self.term, 
+                          self.pid, 
+                          self.log[self.next_index[server] - 1].index, 
+                          self.log[self.next_index[server] - 1].term, 
+                          self.log[self.next_index[server]:], 
+                          self.commit_index).get_message()
+                send_msg(self.network_server_conn, msg)
+                print("resent message")
+        print("done with handle_append_entries_response")
         self.write_to_disk()
+        print("done with writing in handle_append_entries_response")
 
     def read_from_disk(self):
         '''
@@ -325,3 +537,90 @@ class RaftConsensus:
         '''
         filename = f'{config.FILEPATH}/server_{self.pid}.txt'
         # TODO - Read log from disk and load in correct LogEntry format
+
+        if os.path.exists(filename):
+            with open(filename, 'r') as file:
+                self.commit_index= int(file.readline())
+                data = json.load(file)
+                #print(data , "read log form disk")
+                self.log=[LogEntry.from_dict(item) for item in data]
+                self.last_log_writtern_disk=len(self.log)
+                self.term=self.log[-1].term
+                self.last_log_index = self.log[-1].index
+        print( self.commit_index, self.log, self.term, self.last_log_index , " all these are updated from disk")
+    
+
+    def state_machine_read(self, row_id):
+        '''
+        Read database based on ID
+        '''
+        filename = f'{config.FILEPATH}/stateMachine_{self.pid}.txt'
+        # TODO - write more optimal solution because below loop over to find the offset
+        print("read request is ", row_id)
+        try:
+            with open(filename, 'r+b') as file:
+                # current_line = 1
+                # while current_line < row_id:
+                #     t=file.readline()
+                #     print(t , " row read\n")  
+                #     current_line += 1
+
+                # row = file.readline()
+                # print(row , " row read\n")
+                # value = int(row.split()[1])
+                file.seek((row_id-1) * 16)
+                row = struct.unpack('qq', file.read(16))
+                #value = struct.unpack('q', file.read(8))[0]
+                print(row ," row read")
+                value = row[1]#int(row.split()[1])
+                
+                return value
+        except FileNotFoundError:
+            print(f"The file '{filename}' does not exist.")
+            return None
+        except Exception as e:
+            print(f"Error: {e}")
+            return None
+    
+    def state_machine_write(self, row_id,val=None):
+        #'''
+        #write\update database based on ID
+        #'''
+        filename = f'{config.FILEPATH}/stateMachine_{self.pid}.txt'
+        # TODO - Read log from disk and load in correct LogEntry format
+        print(row_id,val , " write these values\n\n")
+        if not os.path.exists(filename):
+            #data = np.random.randint(0, 100, size=100, dtype=np.int64)
+            with open(filename, 'wb') as file:
+                for i in range(1,1000):  # for now creating the random file but we need to have the actual file 
+                    #file.write(f"{struct.pack('q', i)} {struct.pack('q', 10)}\n".encode())
+                    file.write(struct.pack('qq', np.int64(i),np.int64(10)))
+                    
+        if(val):
+            with open(filename, 'r+b') as file:
+                offset = 0
+
+                # for _ in range(1, row_id):
+                #     line = file.readline()  
+                #     offset += len(line) 
+
+                # file.seek(offset)
+                # actual_line=file.readline()
+                # actual_curr_len = len(actual_line)
+                # file.seek(offset)
+                # new_line = f"{row_id} {val}\n"
+                # file.write(new_line.encode('utf-8'))
+                # #actual_line=file.readline()
+                # #print(new_line, actual_line, len(new_line), len(actual_line), " compare length after write")
+                # # if 0 < len(actual_line):
+                # #     file.truncate() 
+                # current_end_position = file.tell()
+                # print(new_line, actual_line, len(new_line), len(actual_line), current_end_position, " compare length after write")
+                # if current_end_position < offset + actual_curr_len:
+                #     file.write(b' ' * (actual_curr_len - (current_end_position - offset)))
+                # print(f"Updated row {row_id} with value {val}.")
+                file.seek((row_id-1) * 16)
+                file.write(struct.pack('qq', np.int64(row_id),np.int64(val)))
+
+        
+    

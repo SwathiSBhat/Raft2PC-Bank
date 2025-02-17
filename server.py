@@ -13,10 +13,10 @@ import json
 
 def handle_server_msg(conn, data):    
     data = json.loads(data)
-    try:
-        raft.handle_message(data)
-    except:
-	    print("Exception in handling message from network server")
+    #try:
+    raft.handle_message(data)
+    #except:
+	#    print("Exception in handling message from network server")
 
 def recv_msg(conn, addr):
     buffer = ""
@@ -52,7 +52,10 @@ def get_user_input():
             stdout.flush()
 			# exit program with status 0
             _exit(0)
-
+        #used to print the balance of the id
+        elif cmd == "print":
+            id = int(user_input.split()[1])
+            print(raft.state_machine_read(id))
         # TODO - The below commands can be removed once the client is implemented
         elif cmd == "intra-shard":
             # intra-shard <from account> <to account> <amount>

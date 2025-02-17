@@ -79,39 +79,48 @@ def handle_server_msg(conn, data):
     global client_socks
     global alive_servers
 
-    try:
-        if data["msg_type"] == "init":
-            # Init: Connected to server <node_id>
-            node_id = int(data["node_id"])
-            server_socks[node_id] = conn
-            alive_servers[node_id] = True
-            print(f"Connected to server {node_id}")
+    #try:
+    if data["msg_type"] == "init":
+        # Init: Connected to server <node_id>
+        node_id = int(data["node_id"])
+        server_socks[node_id] = conn
+        alive_servers[node_id] = True
+        print(f"Connected to server {node_id}")
 
-        elif data["msg_type"] == "init_client":
-            # Init: Connected to client <client_id>
-            client_id = int(data["node_id"])
-            print(f"Connected to client {client_id}")
+    elif data["msg_type"] == "init_client":
+        # Init: Connected to client <client_id>
+        client_id = int(data["node_id"])
+        client_socks[client_id] = conn
+        print(f"Connected to client {client_id}")
 
-        elif data["msg_type"] == "client_request_init":
-            # Forward request to any random alive server in the cluster
-            forward_msg(data)
+    elif data["msg_type"] == "client_request_init":
+        # Forward request to any random alive server in the cluster
+        forward_msg(data)
 
-        elif data["msg_type"] == "server_exit":
-            # Server exit: Server <node_id> has exited
-            node_id = int(data["node_id"])
-            alive_servers[node_id] = False
-            print(f"Server {node_id} has exited")
-            
-        # Forward message to destination server in the cluster
+    elif data["msg_type"] == "server_exit":
+        # Server exit: Server <node_id> has exited
+        node_id = int(data["node_id"])
+        alive_servers[node_id] = False
+        print(f"Server {node_id} has exited")
+
+    elif data["msg_type"] == "client_response":
+        dest_id = data["dest_id"]
+        if dest_id not in client_socks:
+            print(f"client {dest_id} not connected")
         else:
-            dest_id = data["dest_id"]
-            if dest_id not in server_socks or alive_servers[dest_id] == False:
-                print(f"Server {dest_id} not connected")
-            else:
-                print(f"Forwarding message to server {dest_id}")
-                send_msg(server_socks[dest_id], data)
-    except:
-	    print("Exception in handling server message at network server")
+            print(f"Forwarding message to client {dest_id}")
+            send_msg(client_socks[dest_id], data)
+
+    # Forward message to destination server in the cluster
+    else:
+        dest_id = data["dest_id"]
+        if dest_id not in server_socks or alive_servers[dest_id] == False:
+            print(f"Server {dest_id} not connected")
+        else:
+            print(f"Forwarding message to server {dest_id}")
+            send_msg(server_socks[dest_id], data)
+    #except:
+	#    print("Exception in handling server message at network server")
 
 def recv_msg(conn, addr):
     buffer = ""
