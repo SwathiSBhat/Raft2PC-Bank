@@ -29,7 +29,7 @@ def forward_msg(data):
     1001-2000 => cluster 2 (servers 4,5,6)
     2001-3000 => cluster 3 (servers 7,8,9)
     '''
-    print(f"Forwarding client request: {data}")
+
     command = data["command"]
     from_account = int(command.split(",")[0])
     to_account = int(command.split(",")[1])
@@ -37,8 +37,6 @@ def forward_msg(data):
     from_cluster = (from_account - 1) // 1000 + 1
     to_cluster = (to_account - 1) // 1000 + 1
     amount = float(command.split(",")[2])
-    print(f"From cluster: {from_cluster}, To cluster: {to_cluster} amount: {amount}")
-    print(f"Alive servers: {alive_servers}")
 
     if from_cluster == to_cluster:
         # intra-shard
@@ -49,7 +47,7 @@ def forward_msg(data):
         while alive_servers.get(dest_id, False) == False:
             dest_id = random.choice(get_servers_in_cluster(from_cluster))
 
-        print(f"Forwarding intra-shard message to server {dest_id}")
+        print(f"[DEBUG] Forwarding intra-shard message to server {dest_id}")
         msg = ClientRequestMessage(command, data["client_id"], dest_id)
         send_msg(server_socks[dest_id], msg.get_message())
     
@@ -65,13 +63,11 @@ def forward_msg(data):
         while alive_servers.get(dest_id2, False) == False:
             dest_id2 = random.choice(get_servers_in_cluster(to_cluster))
 
-        print(f"Forwarding inter-shard message to server {dest_id1} and {dest_id2}")
-        print(f"data: {data}")  
         msg = ClientRequestMessage(command, data["client_id"], dest_id1)
         send_msg(server_socks[dest_id1], msg.get_message())
         msg = ClientRequestMessage(command, data["client_id"], dest_id2)
         send_msg(server_socks[dest_id2], msg.get_message())
-        print(f"Forwarding inter-shard message to server {dest_id1} and {dest_id2}")
+        print(f"[DEBUG] Forwarding inter-shard message to server {dest_id1} and {dest_id2}")
 
 
 def handle_server_msg(conn, data):
@@ -79,48 +75,49 @@ def handle_server_msg(conn, data):
     global client_socks
     global alive_servers
 
-    #try:
-    if data["msg_type"] == "init":
-        # Init: Connected to server <node_id>
-        node_id = int(data["node_id"])
-        server_socks[node_id] = conn
-        alive_servers[node_id] = True
-        print(f"Connected to server {node_id}")
+    try:
+        if data["msg_type"] == "init":
+            # Init: Connected to server <node_id>
+            node_id = int(data["node_id"])
+            server_socks[node_id] = conn
+            alive_servers[node_id] = True
+            print(f"[CONNECTION] Connected to server {node_id}")
 
-    elif data["msg_type"] == "init_client":
-        # Init: Connected to client <client_id>
-        client_id = int(data["node_id"])
-        client_socks[client_id] = conn
-        print(f"Connected to client {client_id}")
+        elif data["msg_type"] == "init_client":
+            # Init: Connected to client <client_id>
+            client_id = int(data["node_id"])
+            client_socks[client_id] = conn
+            print(f"[CONNECTION] Connected to client {client_id}")
 
-    elif data["msg_type"] == "client_request_init":
-        # Forward request to any random alive server in the cluster
-        forward_msg(data)
+        elif data["msg_type"] == "client_request_init":
+            # Forward request to any random alive server in the cluster
+            forward_msg(data)
 
-    elif data["msg_type"] == "server_exit":
-        # Server exit: Server <node_id> has exited
-        node_id = int(data["node_id"])
-        alive_servers[node_id] = False
-        print(f"Server {node_id} has exited")
+        elif data["msg_type"] == "server_exit":
+            # Server exit: Server <node_id> has exited
+            node_id = int(data["node_id"])
+            alive_servers[node_id] = False
+            print(f"[CONNECTION] Server {node_id} has exited")
 
-    elif data["msg_type"] == "client_response":
-        dest_id = data["dest_id"]
-        if dest_id not in client_socks:
-            print(f"client {dest_id} not connected")
+        elif data["msg_type"] == "client_response":
+            dest_id = data["dest_id"]
+            if dest_id not in client_socks:
+                print(f"[CONNECTION] client {dest_id} not connected")
+            else:
+                print(f"[DEBUG] Forwarding message to client {dest_id}")
+                send_msg(client_socks[dest_id], data)
+
+        # Forward message to destination server in the cluster
         else:
-            print(f"Forwarding message to client {dest_id}")
-            send_msg(client_socks[dest_id], data)
+            dest_id = data["dest_id"]
+            if dest_id not in server_socks or alive_servers[dest_id] == False:
+                print(f"[CONNECTION] Server {dest_id} not connected")
+            else:
+                print(f"[DEBUG] Forwarding message of type {data["msg_type"]} to server {dest_id}")
+                send_msg(server_socks[dest_id], data)
+    except:
+        print("[ERROR] Exception in handling server message at network server")
 
-    # Forward message to destination server in the cluster
-    else:
-        dest_id = data["dest_id"]
-        if dest_id not in server_socks or alive_servers[dest_id] == False:
-            print(f"Server {dest_id} not connected")
-        else:
-            print(f"Forwarding message to server {dest_id}")
-            send_msg(server_socks[dest_id], data)
-    #except:
-	#    print("Exception in handling server message at network server")
 
 def recv_msg(conn, addr):
     buffer = ""
@@ -141,10 +138,10 @@ def recv_msg(conn, addr):
                 # Spawn new thread for every msg to ensure IO is non-blocking
                 threading.Thread(target=handle_server_msg, args=(conn, data)).start()
             except json.JSONDecodeError:
-                print("Error in decoding JSON")
+                print("[ERROR] Error in decoding JSON")
                 break
             except:
-                print("Exception in handling server message at network server")
+                print("[ERROR] Exception in handling server message at network server")
                 break
 
 def get_user_input():
@@ -168,8 +165,9 @@ def get_user_input():
             for sock, addr in out_socks:
                 if addr[1] == node_id:
                     sock.close()
-                    print(f"Killed server node with node_id: {node_id}")
+                    print(f"[CONNECTION] Killed server node with node_id: {node_id}")
                     break
+                
         elif cmd == "failLink":
             # failLink <node_id1> <node_id2>
             node_id1 = int(user_input.split()[1])

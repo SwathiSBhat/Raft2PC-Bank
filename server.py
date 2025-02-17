@@ -36,7 +36,7 @@ def recv_msg(conn, addr):
                 # Spawn new thread for every msg to ensure IO is non-blocking
                 threading.Thread(target=handle_server_msg, args=(conn, msg)).start()
             except:
-                print("Exception in handling message at server {pid}")
+                print("[ERROR] Exception in handling message at server {pid}")
                 break
 
 def get_user_input():
@@ -52,6 +52,7 @@ def get_user_input():
             stdout.flush()
 			# exit program with status 0
             _exit(0)
+
         #used to print the balance of the id
         elif cmd == "print":
             id = int(user_input.split()[1])
@@ -72,7 +73,7 @@ def get_user_input():
             pass
 
 if __name__ == "__main__":
-    
+
     pid = int(argv[1])
 
     SERVER_IP = socket.gethostname()
