@@ -104,7 +104,7 @@ def handle_server_msg(conn, data):
             if dest_id not in server_socks or alive_servers[dest_id] == False:
                 print(f"[CONNECTION] Server {dest_id} not connected")
             else:
-                print(f"[DEBUG] Forwarding message of type {data["msg_type"]} to server {dest_id}")
+                print(f"[DEBUG] Forwarding message of type {data['msg_type']} to server {dest_id}")
                 send_msg(server_socks[dest_id], data)
     except:
 	    print("[ERROR] Exception in handling server message at network server")
