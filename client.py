@@ -10,7 +10,8 @@ import config
 import threading
 from common_utils import send_msg, MessageType
 
-def handle_server_msg(conn, data):    
+def handle_server_msg(conn, data): 
+    #print(data)   
     data = data.decode()
     print(f"Response from server: {data}")
 
@@ -26,7 +27,7 @@ def recv_msg(conn, addr):
 
         try:
             # Spawn new thread for every msg to ensure IO is non-blocking
-            threading.Thread(target=handle_server_msg, args=(conn, msg)).start()
+            threading.Thread(target=handle_server_msg, args=(conn, data)).start()
         except:
             print("Exception in handling message at client {pid}")
             break

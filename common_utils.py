@@ -2,6 +2,7 @@ import threading
 from time import sleep
 import json
 from constants import MessageType
+import pickle
 
 def get_cluster(server_id):
 	'''
@@ -65,6 +66,23 @@ class ClientRequestMessage():
 		msg["dest_id"] = self.dest_id
 		return msg
 	
+class ClientResponseMessage():
+	def __init__(self, command, server_id, dest_client_id,status):
+		self.command = command
+		self.server_id = server_id
+		self.dest_id = dest_client_id
+		self.msg_type = MessageType.CLIENT_RESPONSE
+		self.status = status
+
+	def get_message(self):
+		msg = {}
+		msg["msg_type"] = self.msg_type
+		msg["command"] = self.command
+		msg["server_id"] = self.server_id
+		msg["dest_id"] = self.dest_id
+		msg["status"] = self.status
+		return msg
+	
 class VoteRequestMessage():
 	def __init__(self, term, dest_id, candidate_id, last_log_index, last_log_term):
 		self.term = term
@@ -85,10 +103,11 @@ class VoteRequestMessage():
 		return msg
 	
 class VoteResponseMessage():
-	def __init__(self, dest_id, term, vote):
+	def __init__(self, dest_id, term, vote, commit_index):
 		self.term = term
 		self.dest_id = dest_id
 		self.vote = vote
+		self.commit_index = commit_index
 		self.msg_type = MessageType.VOTE_RESPONSE
 
 	def get_message(self):
@@ -97,6 +116,7 @@ class VoteResponseMessage():
 		msg["term"] = self.term
 		msg["dest_id"] = self.dest_id
 		msg["vote"] = self.vote
+		msg["sender_commit_index"] = self.commit_index
 		return msg
 	
 class AppendEntriesMessage():
@@ -110,6 +130,12 @@ class AppendEntriesMessage():
 		self.commit_index = commit_index
 		self.msg_type = MessageType.APPEND_ENTRIES
 
+	# def custom_serializer(self,obj):
+	# 	if isinstance(obj, LogEntry):
+	# 		print(obj, obj.to_json)
+	# 		return obj.to_json()  # Convert Person object to dict
+	# 	raise TypeError(f"Type {type(obj)} not serializable")
+
 	def get_message(self):
 		msg = {}
 		msg["msg_type"] = self.msg_type
@@ -118,35 +144,43 @@ class AppendEntriesMessage():
 		msg["leader_id"] = self.leader_id
 		msg["prev_log_index"] = self.prev_log_index
 		msg["prev_log_term"] = self.prev_log_term
-		msg["entries"] = self.entries
+		msg["entries"] = [i.to_json() for i in self.entries] #TODO - check if there is any optimal solution #json.dumps(self.entries,default=self.custom_serializer) 
 		msg["commit_index"] = self.commit_index
 		return msg
 	
 class AppendEntriesResponseMessage():
-	def __init__(self, dest_id, sender_server_id, term, success):
+	def __init__(self, dest_id, sender_server_id, term, index, commit_index, success):
 		self.term = term
+		self.approve_index = index
 		self.dest_id = dest_id
 		self.sender_server_id = sender_server_id
 		self.success = success
+		self.commit_index = commit_index
 		self.msg_type = MessageType.APPEND_ENTRIES_RESPONSE
 
 	def get_message(self):
 		msg = {}
 		msg["msg_type"] = self.msg_type
 		msg["term"] = self.term
+		msg["approve_index"] = self.approve_index
 		msg["dest_id"] = self.dest_id
 		msg["sender_server_id"] = self.sender_server_id
 		msg["success"] = self.success
+		msg["sender_commit_index"] = self.commit_index
 		return msg
 	
 class LogEntry:
-	def __init__(self, term, command, index, client_id):
+	def __init__(self, term, command, index, client_id,id=None):
 		self.term = term
 		self.command = command
 		self.index = index
 		self.client_id = client_id
-		self.id = None
+		self.id = id
 		
+	@classmethod
+	def from_dict(cls, data):
+		return cls(data['term'], data['command'],data['index'],data['client_id'],data['id'])
+
 	def __repr__(self):
 		return f"LogEntry(term={self.term}, command={self.command}, index={self.index}, client_id={self.client_id})"
 	
@@ -158,3 +192,7 @@ class LogEntry:
 	
 	def __ne__(self, other):
 		return not self.__eq__(other)	
+	
+	def to_json(self):
+		#return self.__dict__
+		return {"term":self.term, "command":self.command, "index":self.index, "client_id":self.client_id, "id":self.id}

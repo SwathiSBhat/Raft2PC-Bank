@@ -86,6 +86,7 @@ def handle_server_msg(conn, data):
         elif data["msg_type"] == "init_client":
             # Init: Connected to client <client_id>
             client_id = int(data["node_id"])
+            client_socks[client_id] = conn
             print(f"[CONNECTION] Connected to client {client_id}")
 
         elif data["msg_type"] == "client_request_init":
@@ -97,7 +98,15 @@ def handle_server_msg(conn, data):
             node_id = int(data["node_id"])
             alive_servers[node_id] = False
             print(f"[CONNECTION] Server {node_id} has exited")
-            
+
+        elif data["msg_type"] == "client_response":
+            dest_id = data["dest_id"]
+            if dest_id not in client_socks:
+                print(f"[CONNECTION] client {dest_id} not connected")
+            else:
+                print(f"[DEBUG] Forwarding message to client {dest_id}")
+                send_msg(client_socks[dest_id], data)
+
         # Forward message to destination server in the cluster
         else:
             dest_id = data["dest_id"]
@@ -107,7 +116,8 @@ def handle_server_msg(conn, data):
                 print(f"[DEBUG] Forwarding message of type {data['msg_type']} to server {dest_id}")
                 send_msg(server_socks[dest_id], data)
     except:
-	    print("[ERROR] Exception in handling server message at network server")
+        print("[ERROR] Exception in handling server message at network server")
+
 
 def recv_msg(conn, addr):
     buffer = ""
