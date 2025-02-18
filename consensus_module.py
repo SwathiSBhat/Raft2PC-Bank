@@ -45,12 +45,15 @@ class RaftConsensus:
         #self.state_machine_lock = threading.Lock()
         self.conditional_lock_state_machine = threading.Condition()
         self.processing_ids = defaultdict(int)
+        self.pending_request = 0
 
         self.read_from_disk()
         self.write_to_disk()
 
         self.state_machine_write(1)
 
+        self.heartbeat_timer = None
+        self.heartbeat_timeout = 0.5
         self.election_timer = threading.Timer(self.election_timeout, self.start_election)
         self.election_timer.start()
         #print(self.state_machine_read(1))
@@ -102,22 +105,30 @@ class RaftConsensus:
         self.election_timer.cancel()
         self.election_timer = threading.Timer(self.election_timeout, self.start_election)
         self.election_timer.start()
-    
+
+    def reset_heartbeat_timer(self):
+        self.heartbeat_timer.cancel()
+        self.heartbeat_timer = threading.Timer(self.heartbeat_timeout, self.start_heartbeat_timer)
+        self.heartbeat_timer.start()
+
     def cancel_election_timer(self):
         self.election_timer.cancel()
 
     def start_heartbeat_timer(self):
-        threading.Thread(target=self.send_heartbeat).start()
+        self.send_heartbeat()
+        self.heartbeat_timer = threading.Timer(self.heartbeat_timeout, self.start_heartbeat_timer)
+        self.heartbeat_timer.start()
+        #threading.Thread(target=self.send_heartbeat).start()
 
     def send_heartbeat(self):
         '''
         Send heartbeat to all servers in a separate thread every 0.5 seconds
         if current state is leader
         '''
-        while self.state == constants.RaftState.LEADER:
+        if self.state == constants.RaftState.LEADER:
             for server in self.connected_servers:
                 # TODO - Heartbeat is basically append_entries with empty log
-                if(self.server_commit_index[server]>=self.commit_index):
+                if(self.server_commit_index[server]>=self.commit_index and self.pending_request==0 ):
                     msg = HeartbeatMessage(self.pid, server, self.term).get_message()
                     send_msg(self.network_server_conn, msg)
                 else:
@@ -133,7 +144,7 @@ class RaftConsensus:
                             self.log[self.next_index[server]:], 
                             self.commit_index).get_message()
                     send_msg(self.network_server_conn, msg)
-            sleep(0.5)
+            #sleep(0.5)
 
     def handle_message(self, msg):
         if msg["msg_type"] == constants.MessageType.VOTE_REQUEST:
@@ -229,6 +240,7 @@ class RaftConsensus:
                 self.votes += 1
                 if self.votes >= self.quorum:
                     # reset vote count to prevent other threads from updating it
+                    self.pending_request=0
                     self.votes = 0
                     self.state = constants.RaftState.LEADER
                     self.leader = self.pid
@@ -245,6 +257,8 @@ class RaftConsensus:
                         self.next_index[server] = self.last_log_index + 1
                         self.server_commit_index[server] = msg["sender_commit_index"]
                     self.start_heartbeat_timer()
+                    self.heartbeat_timer = threading.Timer(self.heartbeat_timeout, self.start_heartbeat_timer)
+                    self.heartbeat_timer.start()
         else:
             # Update term if term in response is greater
             if msg["term"] > self.term:
@@ -271,9 +285,12 @@ class RaftConsensus:
         2. Send append entries to all servers
         '''
         cmd = list(map(int,msg["command"].split(",")))
-        #print(cmd ,msg , " : cmd value")
+        #print(cmd ,msg , " : cmd value before cond lock")
         with self.conditional_lock_state_machine:
-            while(self.processing_ids[cmd[0]] !=0 and self.processing_ids[cmd[1]]!=0):
+            self.pending_request +=1
+            #print(self.processing_ids , cmd, " before loop \n\n")
+            while(self.processing_ids[cmd[0]] !=0 or self.processing_ids[cmd[1]]!=0):
+                print( f" STUCK in this this loop {cmd} {self.processing_ids}\n\n")
                 self.conditional_lock_state_machine.wait()
             self.processing_ids[cmd[0]]=1
             self.processing_ids[cmd[1]]=1 
@@ -294,7 +311,9 @@ class RaftConsensus:
 
         with self.lock:
                 logEntry = LogEntry(self.term, msg["command"], self.last_log_index + 1, msg["client_id"])
+                self.last_log_index += 1
         self.log.append(logEntry)
+        self.reset_heartbeat_timer()
         for server in self.connected_servers:
             # If prev_log_index >= next_index for server, send append entries
             # with log entries starting at next_index for server
@@ -315,8 +334,8 @@ class RaftConsensus:
                           self.commit_index).get_message()
             #print(msg , " check before sending")
             send_msg(self.network_server_conn, msg)
-        with self.lock:
-            self.last_log_index += 1
+        # with self.lock:
+        #     self.last_log_index += 1
 
     def handle_append_entries(self, msg):
         '''
@@ -346,6 +365,9 @@ class RaftConsensus:
         if self.state == constants.RaftState.CANDIDATE or self.state == constants.RaftState.LEADER:
             self.state = constants.RaftState.FOLLOWER
             self.leader = leader
+            if(self.heartbeat_timer!=None):
+                self.heartbeat_timer.cancel()
+                self.heartbeat_timer = None
 
         self.reset_election_timer()
         # Check if log contains an entry at prevLogIndex whose term matches prevLogTerm
@@ -371,7 +393,8 @@ class RaftConsensus:
                 cmd=list(map(int,log_entry.command.split(",")))
                 with self.conditional_lock_state_machine:
                     #TODO - check if this wait is required?? 
-                    while(self.processing_ids[cmd[0]] !=0 and self.processing_ids[cmd[1]]!=0):
+                    while(self.processing_ids[cmd[0]] !=0 or self.processing_ids[cmd[1]]!=0):
+                        print( f" STUCK in this this loop {cmd} {self.processing_ids}\n\n")
                         self.conditional_lock_state_machine.wait()
                     self.processing_ids[cmd[0]]=1
                     self.processing_ids[cmd[1]]=1 
@@ -445,9 +468,10 @@ class RaftConsensus:
                         self.processing_ids[cmd[0]]-=1
                         self.processing_ids[cmd[1]]-=1
                         with self.conditional_lock_state_machine:
+                            self.pending_request-=1
                             self.conditional_lock_state_machine.notify_all()
-                        print("Something has gone wrong PLEASE CHECK!!!!: balance amount is low ", amt , " for transaction: ",msg["command"])
-                        raise ValueError(f"Something has gone wrong PLEASE CHECK!!!!: balance amount is low {amt} for transaction: {msg["command"]}")
+                        print("Something has gone wrong PLEASE CHECK!!!!: balance amount is low ", amt , " for transaction: ",log_entry.command)
+                        raise ValueError(f"Something has gone wrong PLEASE CHECK!!!!: balance amount is low {amt} for transaction: {log_entry.command}")
                     else:
                         self.state_machine_write(cmd[0],amt - cmd[2])
                         amt = self.state_machine_read(cmd[1])
@@ -456,6 +480,7 @@ class RaftConsensus:
                         self.processing_ids[cmd[1]]-=1
                         #print(self.processing_ids)
                         with self.conditional_lock_state_machine:
+                            self.pending_request-=1
                             self.conditional_lock_state_machine.notify_all()
                 
                     
