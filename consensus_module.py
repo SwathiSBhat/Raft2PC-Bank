@@ -312,6 +312,7 @@ class RaftConsensus:
         with self.lock:
                 logEntry = LogEntry(self.term, msg["command"], self.last_log_index + 1, msg["client_id"])
                 self.last_log_index += 1
+                self.last_log_term = self.term
         self.log.append(logEntry)
         self.reset_heartbeat_timer()
         for server in self.connected_servers:
@@ -418,6 +419,7 @@ class RaftConsensus:
             self.commit_index += (msg["commit_index"]-self.commit_index)
             self.write_to_disk()
             self.last_log_index = self.log[-1].index
+            self.last_log_term = self.log[-1].term
 
         msg = AppendEntriesResponseMessage(
                 leader,
@@ -536,6 +538,7 @@ class RaftConsensus:
                 self.last_log_writtern_disk=len(self.log)
                 self.term=self.log[-1].term
                 self.last_log_index = self.log[-1].index
+                self.last_log_term = self.log[-1].term
         #print( self.commit_index, self.log, self.term, self.last_log_index , " all these are updated from disk")
     
 
