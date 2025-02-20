@@ -3,6 +3,7 @@ from time import sleep
 import json
 from constants import MessageType
 import pickle
+import config
 
 def get_cluster(server_id):
 	'''
@@ -34,6 +35,8 @@ def send_msg(conn, msg):
 	Send message to the server
 	'''
 	msg = json.dumps(msg) + "\n"
+	# Add delay to simulate network latency
+	sleep(config.NETWORK_DELAY)
 	conn.sendall(msg.encode("utf-8"))
 
 class HeartbeatMessage():

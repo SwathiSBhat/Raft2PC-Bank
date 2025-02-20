@@ -37,7 +37,7 @@ class RaftConsensus:
         self.log = [LogEntry(self.term, "", self.last_log_index, -1)]
         self.last_log_writtern_disk=0
         # Initialize election timeout to some random value
-        self.election_timeout = random.uniform(3.0, 5.0);
+        self.election_timeout = random.uniform(2.0, 4.0) + config.NETWORK_DELAY;
         
         # Lock to ensure only one thread updates the logs and vote count
         self.lock = threading.Lock()
