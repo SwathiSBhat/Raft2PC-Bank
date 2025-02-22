@@ -64,9 +64,11 @@ def forward_msg(data):
             dest_id2 = random.choice(get_servers_in_cluster(to_cluster))
 
         msg = ClientRequestMessage(command, data["client_id"], dest_id1)
-        send_msg(server_socks[dest_id1], msg.get_message())
+        if("commit" not in data):
+            send_msg(server_socks[dest_id1], msg.get_message())
         msg = ClientRequestMessage(command, data["client_id"], dest_id2)
-        send_msg(server_socks[dest_id2], msg.get_message())
+        if("commit" in data and data["commit"] == True):
+            send_msg(server_socks[dest_id2], msg.get_message())
         print(f"[DEBUG] Forwarding inter-shard message to server {dest_id1} and {dest_id2}")
 
 

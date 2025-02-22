@@ -9,10 +9,19 @@ import socket
 import config
 import threading
 from common_utils import send_msg, MessageType
-
+import json
 def handle_server_msg(conn, data): 
-    #print(data)   
-    data = data.decode()
+    print(data)   
+    if("prepare_status" in data):
+        if(data["prepare_status"] == True):
+            print("PREPARE STATUS: YES from both the clustures")
+            msg = {"msg_type" : "client_request_init", "command" : data["command"], "client_id" : cid , "commit": True}
+            # print(f"Sending message to server: {msg}")
+            send_msg(network_sock, msg)
+        else:
+            print(f"PREPARE STATUS: NO from one of the clustures so transaction failed for : {data["command"]}")
+        return 
+    #data = data.decode()
     print(f"Response from server: {data}")
 
 def recv_msg(conn, addr):
@@ -24,8 +33,9 @@ def recv_msg(conn, addr):
         if not data:
             conn.close()
             break
-
+        
         try:
+            data = json.loads(data)
             # Spawn new thread for every msg to ensure IO is non-blocking
             threading.Thread(target=handle_server_msg, args=(conn, data)).start()
         except:

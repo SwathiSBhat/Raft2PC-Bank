@@ -10,9 +10,11 @@ from os import _exit
 from consensus_module import RaftConsensus
 from common_utils import send_msg
 import json
+from time import sleep
 
 def handle_server_msg(conn, data):    
     data = json.loads(data)
+    sleep(config.NETWORK_DELAY)
     #try:
     raft.handle_message(data)
     #except:

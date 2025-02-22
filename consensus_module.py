@@ -18,6 +18,7 @@ import config
 class RaftConsensus:
     def __init__(self, pid, network_server_conn):
         self.pid = int(pid)
+        self.total_servers_in_clusture = 3
         self.cluster = common_utils.get_cluster(self.pid)
         self.connected_servers = common_utils.get_servers_in_cluster(self.cluster, pid)
         print(f"Connected servers: {self.connected_servers}")
@@ -37,7 +38,7 @@ class RaftConsensus:
         self.log = [LogEntry(self.term, "", self.last_log_index, -1)]
         self.last_log_writtern_disk=0
         # Initialize election timeout to some random value
-        self.election_timeout = random.uniform(2.0, 4.0) + config.NETWORK_DELAY;
+        self.election_timeout = random.uniform(2.0, 4.0) + 2*config.NETWORK_DELAY;
         
         # Lock to ensure only one thread updates the logs and vote count
         self.lock = threading.Lock()
@@ -53,7 +54,7 @@ class RaftConsensus:
         self.state_machine_write(1)
 
         self.heartbeat_timer = None
-        self.heartbeat_timeout = 0.5
+        self.heartbeat_timeout = 0.5 + 2*config.NETWORK_DELAY
         self.election_timer = threading.Timer(self.election_timeout, self.start_election)
         self.election_timer.start()
         #print(self.state_machine_read(1))
@@ -173,7 +174,7 @@ class RaftConsensus:
             return
         self.state = constants.RaftState.CANDIDATE
         self.term += 1
-        self.voted_for = self.pid
+        #self.voted_for = self.pid
         self.votes = 1;
         self.send_vote_request()
         self.reset_election_timer()
@@ -211,7 +212,7 @@ class RaftConsensus:
         '''
         sender_server_id = msg["candidate_id"]
         vote = False
-
+        #print( msg["term"] > self.term , msg["term"] == self.term , self.voted_for, msg["last_log_index"] , self.last_log_index , msg["last_log_term"], self.last_log_term , " vote request \n\n")
         if msg["term"] > self.term or \
         ((msg["term"] == self.term and (self.voted_for is None or self.voted_for == sender_server_id)) and \
          (msg["last_log_index"] >= self.last_log_index and msg["last_log_term"] >= self.last_log_term)):
@@ -291,23 +292,35 @@ class RaftConsensus:
             #print(self.processing_ids , cmd, " before loop \n\n")
             while(self.processing_ids[cmd[0]] !=0 or self.processing_ids[cmd[1]]!=0):
                 print( f" STUCK in this this loop {cmd} {self.processing_ids}\n\n")
+                #print((cmd[0]>(self.cluster-1) *1000 and cmd[0]<=(self.cluster) *1000) ,not (cmd[1]>(self.cluster-1) *1000 and cmd[1]<=(self.cluster) *1000) , " this is the status" )
+                if((cmd[0]>(self.cluster-1) *1000 and cmd[0]<=(self.cluster) *1000) and not (cmd[1]>(self.cluster-1) *1000 and cmd[1]<=(self.cluster) *1000)):
+                    send_prepare_status = True 
+                    msg= ClientResponseMessage(msg["command"],
+                                            self.pid,
+                                            msg["client_id"],
+                                            False,send_prepare_status).get_message()
+                    send_msg(self.network_server_conn, msg)
+                    return 
                 self.conditional_lock_state_machine.wait()
             self.processing_ids[cmd[0]]=1
             self.processing_ids[cmd[1]]=1 
         
-        amt = self.state_machine_read(cmd[0])
-        if(amt<cmd[2]):
-            msg= ClientResponseMessage(msg["command"],
-                                       self.pid,
-                                       msg["client_id"],
-                                       False).get_message()
-            self.processing_ids[cmd[0]]=0
-            self.processing_ids[cmd[1]]=0
-            with self.conditional_lock_state_machine:
-                self.conditional_lock_state_machine.notify_all() 
-            print("FAILED Transaction because of insufficient balance: ", amt , " for transaction: ",msg["command"])
-            send_msg(self.network_server_conn, msg)
-            return 
+        if(cmd[0]>(self.cluster-1) *1000 and cmd[0]<=(self.cluster) *1000):
+            amt = self.state_machine_read(cmd[0])
+            if(amt<cmd[2]):
+                self.pending_request -=1
+                send_prepare_status = not (cmd[1]>(self.cluster-1) *1000 and cmd[1]<=(self.cluster) *1000) 
+                msg= ClientResponseMessage(msg["command"],
+                                            self.pid,
+                                            msg["client_id"],
+                                            False,send_prepare_status).get_message()
+                self.processing_ids[cmd[0]]=0
+                self.processing_ids[cmd[1]]=0
+                with self.conditional_lock_state_machine:
+                    self.conditional_lock_state_machine.notify_all() 
+                print("FAILED Transaction because of insufficient balance: ", amt , " for transaction: ",msg["command"])
+                send_msg(self.network_server_conn, msg)
+                return 
 
         with self.lock:
                 logEntry = LogEntry(self.term, msg["command"], self.last_log_index + 1, msg["client_id"])
@@ -315,6 +328,12 @@ class RaftConsensus:
                 self.last_log_term = self.term
         self.log.append(logEntry)
         self.reset_heartbeat_timer()
+        if(not (cmd[1]>(self.cluster-1) *1000 and cmd[1]<=(self.cluster) *1000)):
+            msg= ClientResponseMessage(msg["command"],
+                                            self.pid,
+                                            msg["client_id"],
+                                            True,True).get_message()
+            send_msg(self.network_server_conn, msg)
         for server in self.connected_servers:
             # If prev_log_index >= next_index for server, send append entries
             # with log entries starting at next_index for server
@@ -399,22 +418,25 @@ class RaftConsensus:
                         self.conditional_lock_state_machine.wait()
                     self.processing_ids[cmd[0]]=1
                     self.processing_ids[cmd[1]]=1 
-                amt = self.state_machine_read(cmd[0])
-                if(amt<cmd[2]):
-                    self.processing_ids[cmd[0]]-=1
-                    self.processing_ids[cmd[1]]-=1
-                    with self.conditional_lock_state_machine:
-                        self.conditional_lock_state_machine.notify_all()
-                    print("Something has gone wrong PLEASE CHECK!!!!: balance amount is low ", amt , " for transaction: ",log_entry.command)
-                    raise ValueError(f"Something has gone wrong PLEASE CHECK!!!!: balance amount is low {amt} for transaction: {log_entry.command}")
-                else:
+                if(cmd[0]>(self.cluster-1) *1000 and cmd[0]<=(self.cluster) *1000):
+                    amt = self.state_machine_read(cmd[0])
+                    if(amt<cmd[2]):
+                        self.processing_ids[cmd[0]]-=1
+                        self.processing_ids[cmd[1]]-=1
+                        with self.conditional_lock_state_machine:
+                            self.conditional_lock_state_machine.notify_all()
+                        print("Something has gone wrong PLEASE CHECK!!!!: balance amount is low ", amt , " for transaction: ",log_entry.command)
+                        raise ValueError(f"Something has gone wrong PLEASE CHECK!!!!: balance amount is low {amt} for transaction: {log_entry.command}")
+                # else:
+                #if(cmd[0]>(self.cluster-1) *1000 and cmd[0]<=(self.cluster) *1000):
                     self.state_machine_write(cmd[0],amt - cmd[2])
+                if(cmd[1]>(self.cluster-1) *1000 and cmd[1]<=(self.cluster) *1000):
                     amt = self.state_machine_read(cmd[1])
                     self.state_machine_write(cmd[1],amt + cmd[2])  
-                    self.processing_ids[cmd[0]]-=1
-                    self.processing_ids[cmd[1]]-=1
-                    with self.conditional_lock_state_machine:
-                        self.conditional_lock_state_machine.notify_all()
+                self.processing_ids[cmd[0]]-=1
+                self.processing_ids[cmd[1]]-=1
+                with self.conditional_lock_state_machine:
+                    self.conditional_lock_state_machine.notify_all()
             
             self.commit_index += (msg["commit_index"]-self.commit_index)
             self.write_to_disk()
@@ -465,26 +487,29 @@ class RaftConsensus:
                     #         self.conditional_lock_state_machine.wait()
                     #     self.processing_ids[cmd[0]]=1
                     #     self.processing_ids[cmd[1]]=1 
-                    amt = self.state_machine_read(cmd[0])
-                    if(amt<cmd[2]):
-                        self.processing_ids[cmd[0]]-=1
-                        self.processing_ids[cmd[1]]-=1
-                        with self.conditional_lock_state_machine:
-                            self.pending_request-=1
-                            self.conditional_lock_state_machine.notify_all()
-                        print("Something has gone wrong PLEASE CHECK!!!!: balance amount is low ", amt , " for transaction: ",log_entry.command)
-                        raise ValueError(f"Something has gone wrong PLEASE CHECK!!!!: balance amount is low {amt} for transaction: {log_entry.command}")
-                    else:
+                    if(cmd[0]>(self.cluster-1) *1000 and cmd[0]<=(self.cluster) *1000):
+                        amt = self.state_machine_read(cmd[0])
+                        if(amt<cmd[2]):
+                            self.processing_ids[cmd[0]]-=1
+                            self.processing_ids[cmd[1]]-=1
+                            with self.conditional_lock_state_machine:
+                                self.pending_request-=1
+                                self.conditional_lock_state_machine.notify_all()
+                            print("Something has gone wrong PLEASE CHECK!!!!: balance amount is low ", amt , " for transaction: ",log_entry.command)
+                            raise ValueError(f"Something has gone wrong PLEASE CHECK!!!!: balance amount is low {amt} for transaction: {log_entry.command}")
+                
+                    #if(cmd[0]>(self.cluster-1) *1000 and cmd[0]<=(self.cluster) *1000):
                         self.state_machine_write(cmd[0],amt - cmd[2])
+                    if(cmd[1]>(self.cluster-1) *1000 and cmd[1]<=(self.cluster) *1000):
                         amt = self.state_machine_read(cmd[1])
                         self.state_machine_write(cmd[1],amt + cmd[2])  
-                        self.processing_ids[cmd[0]]-=1
-                        self.processing_ids[cmd[1]]-=1
-                        #print(self.processing_ids)
-                        with self.conditional_lock_state_machine:
-                            self.pending_request-=1
-                            self.conditional_lock_state_machine.notify_all()
-                
+                    self.processing_ids[cmd[0]]-=1
+                    self.processing_ids[cmd[1]]-=1
+                    #print(self.processing_ids)
+                    with self.conditional_lock_state_machine:
+                        self.pending_request-=1
+                        self.conditional_lock_state_machine.notify_all()
+            
                     
                     msg1= ClientResponseMessage(log_entry.command,
                                        self.pid,
@@ -551,7 +576,8 @@ class RaftConsensus:
         #print("read request is ", row_id)
         try:
             with open(filename, 'r+b') as file:
-                file.seek((row_id-1) * 16)
+                row_offset=row_id - (self.cluster-1) *1000
+                file.seek((row_offset-1) * 16)
                 row = struct.unpack('qq', file.read(16))
                 #value = struct.unpack('q', file.read(8))[0]
                 #print(row ," row read")
@@ -575,14 +601,16 @@ class RaftConsensus:
         if not os.path.exists(filename):
             #data = np.random.randint(0, 100, size=100, dtype=np.int64)
             with open(filename, 'wb') as file:
-                for i in range(1,1000):  # for now creating the random file but we need to have the actual file 
+                st=(self.cluster-1) *1000+1
+                for i in range(st,st+1000):  # for now creating the random file but we need to have the actual file 
                     #file.write(f"{struct.pack('q', i)} {struct.pack('q', 10)}\n".encode())
                     file.write(struct.pack('qq', np.int64(i),np.int64(10)))
                     
         if(val):
             with open(filename, 'r+b') as file:
                 offset = 0
-                file.seek((row_id-1) * 16)
+                row_offset=row_id - (self.cluster-1) *1000
+                file.seek((row_offset-1) * 16)
                 file.write(struct.pack('qq', np.int64(row_id),np.int64(val)))
 
         

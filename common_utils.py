@@ -36,7 +36,7 @@ def send_msg(conn, msg):
 	'''
 	msg = json.dumps(msg) + "\n"
 	# Add delay to simulate network latency
-	sleep(config.NETWORK_DELAY)
+	# sleep(config.NETWORK_DELAY)
 	conn.sendall(msg.encode("utf-8"))
 
 class HeartbeatMessage():
@@ -70,12 +70,15 @@ class ClientRequestMessage():
 		return msg
 	
 class ClientResponseMessage():
-	def __init__(self, command, server_id, dest_client_id,status):
+	def __init__(self, command, server_id, dest_client_id,status,send_prerare_status = False):
 		self.command = command
 		self.server_id = server_id
 		self.dest_id = dest_client_id
 		self.msg_type = MessageType.CLIENT_RESPONSE
 		self.status = status
+		self.send_prepare_status = False
+		if(send_prerare_status):
+			self.send_prepare_status = True
 
 	def get_message(self):
 		msg = {}
@@ -84,6 +87,8 @@ class ClientResponseMessage():
 		msg["server_id"] = self.server_id
 		msg["dest_id"] = self.dest_id
 		msg["status"] = self.status
+		if(self.send_prepare_status):
+			msg["prepare_status"] = self.status
 		return msg
 	
 class VoteRequestMessage():
