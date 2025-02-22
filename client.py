@@ -11,20 +11,32 @@ import threading
 from common_utils import send_msg, MessageType
 import json
 def handle_server_msg(conn, data): 
-    print(data)   
+    global lock
+    global trans_id
+    global prev_status_id
+    data = json.loads(data) 
     if("prepare_status" in data):
-        if(data["prepare_status"] == True):
-            print("PREPARE STATUS: YES from both the clustures")
-            msg = {"msg_type" : "client_request_init", "command" : data["command"], "client_id" : cid , "commit": True}
-            # print(f"Sending message to server: {msg}")
-            send_msg(network_sock, msg)
-        else:
-            print(f"PREPARE STATUS: NO from one of the clustures so transaction failed for : {data["command"]}")
+        with lock:
+            if(data["trans_id"] not in prev_status_id):
+                prev_status_id[data["trans_id"]]=data["prepare_status"]
+            else:
+                if(prev_status_id[data["trans_id"]] and data["prepare_status"] == True):
+                    print("PREPARE STATUS: YES from both the clustures")
+                    msg = {"msg_type" : "client_commit", "command" : data["command"], "client_id" : cid , "trans_id":data["trans_id"], "commit": True}
+                    # print(f"Sending message to server: {msg}")
+                    send_msg(network_sock, msg)
+                else:
+                    print(f"PREPARE STATUS: NO from one of the clustures so transaction failed for : {data["command"]}")
+                    msg = {"msg_type" : "client_commit", "command" : data["command"], "client_id" : cid , "trans_id":data["trans_id"], "commit": False}
+                    # print(f"Sending message to server: {msg}")
+                    send_msg(network_sock, msg)
+                del prev_status_id[data["trans_id"]]
         return 
     #data = data.decode()
     print(f"Response from server: {data}")
 
 def recv_msg(conn, addr):
+    buffer = ""
     while True:
         try:
             data = conn.recv(1024)
@@ -33,16 +45,20 @@ def recv_msg(conn, addr):
         if not data:
             conn.close()
             break
-        
-        try:
-            data = json.loads(data)
-            # Spawn new thread for every msg to ensure IO is non-blocking
-            threading.Thread(target=handle_server_msg, args=(conn, data)).start()
-        except:
-            print("Exception in handling message at client {pid}")
-            break
+        buffer += data.decode()
+
+        while "\n" in buffer:
+            msg, buffer = buffer.split("\n", 1)
+            try:
+                # Spawn new thread for every msg to ensure IO is non-blocking
+                threading.Thread(target=handle_server_msg, args=(conn, msg)).start()
+            except:
+                print("[ERROR] Exception in handling message at server {pid}")
+                break
 
 def get_user_input():
+    global lock
+    global trans_id
     while True:
         # wait for user input
         user_input = input()
@@ -52,8 +68,11 @@ def get_user_input():
             stdout.flush()
 			# exit program with status 0
             _exit(0)
+        with lock:
+            temp_id=trans_id
+            trans_id+=1
+        msg = {"msg_type" : "client_request_init", "command" : user_input, "client_id" : cid, "trans_id": str(cid)+"_"+str(temp_id)}
 
-        msg = {"msg_type" : "client_request_init", "command" : user_input, "client_id" : cid}
         # print(f"Sending message to server: {msg}")
         send_msg(network_sock, msg)
 
@@ -61,7 +80,9 @@ def get_user_input():
 if __name__ == "__main__":
 
     cid = int(argv[1])
-
+    trans_id=0
+    prev_status_id={}
+    lock = threading.Lock()
     CLIENT_IP = socket.gethostname()
     CLIENT_PORT = config.CLIENT_PORTS[int(cid)]
 

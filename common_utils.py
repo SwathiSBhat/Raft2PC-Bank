@@ -55,10 +55,11 @@ class HeartbeatMessage():
 		return msg
 
 class ClientRequestMessage():
-	def __init__(self, command, client_id, dest_id):
+	def __init__(self, command, client_id, dest_id, trans_id):
 		self.command = command
 		self.client_id = client_id
 		self.dest_id = dest_id
+		self.trans_id = trans_id
 		self.msg_type = MessageType.CLIENT_REQUEST
 
 	def get_message(self):
@@ -67,15 +68,17 @@ class ClientRequestMessage():
 		msg["command"] = self.command
 		msg["client_id"] = self.client_id
 		msg["dest_id"] = self.dest_id
+		msg["trans_id"] = self.trans_id
 		return msg
 	
 class ClientResponseMessage():
-	def __init__(self, command, server_id, dest_client_id,status,send_prerare_status = False):
+	def __init__(self, command, server_id, dest_client_id,status,trans_id,send_prerare_status = False):
 		self.command = command
 		self.server_id = server_id
 		self.dest_id = dest_client_id
 		self.msg_type = MessageType.CLIENT_RESPONSE
 		self.status = status
+		self.trans_id = trans_id
 		self.send_prepare_status = False
 		if(send_prerare_status):
 			self.send_prepare_status = True
@@ -87,6 +90,7 @@ class ClientResponseMessage():
 		msg["server_id"] = self.server_id
 		msg["dest_id"] = self.dest_id
 		msg["status"] = self.status
+		msg["trans_id"] = self.trans_id
 		if(self.send_prepare_status):
 			msg["prepare_status"] = self.status
 		return msg

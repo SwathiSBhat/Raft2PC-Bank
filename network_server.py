@@ -48,28 +48,37 @@ def forward_msg(data):
             dest_id = random.choice(get_servers_in_cluster(from_cluster))
 
         print(f"[DEBUG] Forwarding intra-shard message to server {dest_id}")
-        msg = ClientRequestMessage(command, data["client_id"], dest_id)
+        msg = ClientRequestMessage(command, data["client_id"], dest_id, data["trans_id"])
         send_msg(server_socks[dest_id], msg.get_message())
     
     else:
-        # inter-shard
-        # create CLIENT_REQUEST message to random alive server in the cluster
-        # send the message to the server
-        dest_id1 = random.choice(get_servers_in_cluster(from_cluster))
-        while alive_servers.get(dest_id1, False) == False:
+        if(data["msg_type"] == "client_commit"):
+            for i in get_servers_in_cluster(from_cluster):
+                if(alive_servers.get(i, False) == True):
+                    send_msg(server_socks[i], data)
+
+            for i in get_servers_in_cluster(to_cluster):
+                if(alive_servers.get(i, False) == True):
+                    send_msg(server_socks[i],data)
+        else:
+            # inter-shard
+            # create CLIENT_REQUEST message to random alive server in the cluster
+            # send the message to the server
             dest_id1 = random.choice(get_servers_in_cluster(from_cluster))
+            while alive_servers.get(dest_id1, False) == False:
+                dest_id1 = random.choice(get_servers_in_cluster(from_cluster))
 
-        dest_id2 = random.choice(get_servers_in_cluster(to_cluster))
-        while alive_servers.get(dest_id2, False) == False:
             dest_id2 = random.choice(get_servers_in_cluster(to_cluster))
+            while alive_servers.get(dest_id2, False) == False:
+                dest_id2 = random.choice(get_servers_in_cluster(to_cluster))
 
-        msg = ClientRequestMessage(command, data["client_id"], dest_id1)
-        if("commit" not in data):
+            msg = ClientRequestMessage(command, data["client_id"], dest_id1, data["trans_id"])
+            #if("commit" not in data):
             send_msg(server_socks[dest_id1], msg.get_message())
-        msg = ClientRequestMessage(command, data["client_id"], dest_id2)
-        if("commit" in data and data["commit"] == True):
+            msg = ClientRequestMessage(command, data["client_id"], dest_id2, data["trans_id"])
+            #if("commit" in data and data["commit"] == True):
             send_msg(server_socks[dest_id2], msg.get_message())
-        print(f"[DEBUG] Forwarding inter-shard message to server {dest_id1} and {dest_id2}")
+            print(f"[DEBUG] Forwarding inter-shard message to server {dest_id1} and {dest_id2}")
 
 
 def handle_server_msg(conn, data):
@@ -108,7 +117,8 @@ def handle_server_msg(conn, data):
             else:
                 print(f"[DEBUG] Forwarding message to client {dest_id}")
                 send_msg(client_socks[dest_id], data)
-
+        elif data["msg_type"] == "client_commit":
+            forward_msg(data)
         # Forward message to destination server in the cluster
         else:
             dest_id = data["dest_id"]

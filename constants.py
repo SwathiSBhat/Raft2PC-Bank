@@ -19,3 +19,4 @@ class MessageType:
     HEARTBEAT_RESPONSE = "heartbeat_response"
     CLIENT_REQUEST = "client_request"
     CLIENT_RESPONSE = "client_response"
+    CLIENT_COMMIT = "client_commit"

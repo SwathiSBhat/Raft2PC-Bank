@@ -4,4 +4,4 @@ LINKS = {(1, 2): True, (1, 3): True, (2, 3): True, (4, 5): True, (4, 6): True, (
 SERVER_PORTS = {1: 9001, 2: 9002, 3: 9003, 4: 9004, 5: 9005, 6: 9006, 7: 9007, 8: 9008, 9: 9009}
 CLIENT_PORTS = {1: 8001, 2: 8002, 3: 8003}
 FILEPATH = "data/"
-NETWORK_DELAY = 0
+NETWORK_DELAY = 3
