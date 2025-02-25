@@ -8,12 +8,21 @@ import threading
 from sys import argv, stdout
 from os import _exit
 from consensus_module import RaftConsensus
-from common_utils import send_msg
+from common_utils import send_msg, MessageType
 import json
 from time import sleep
 
 def handle_server_msg(conn, data):    
     data = json.loads(data)
+
+    # if its a print request, do not add delay
+    if data["msg_type"] == MessageType.PRINT_BALANCE:
+        balance = raft.state_machine_read(int(data["command"]))
+        msg = {"msg_type": MessageType.BALANCE_RESPONSE, "balance": balance, "client_id": data["client_id"], "account_id": data["command"], "server_id": pid}
+        # send response to network server
+        send_msg(network_sock, msg)
+        return
+        
     sleep(config.NETWORK_DELAY)
     #try:
     raft.handle_message(data)
@@ -75,6 +84,7 @@ def get_user_input():
             pass
 
 if __name__ == "__main__":
+    global network_sock
 
     pid = int(argv[1])
 

@@ -21,12 +21,12 @@ def handle_server_msg(conn, data):
                 prev_status_id[data["trans_id"]]=data["prepare_status"]
             else:
                 if(prev_status_id[data["trans_id"]] and data["prepare_status"] == True):
-                    print("PREPARE STATUS: YES from both the clustures")
+                    print("PREPARE STATUS: YES from both the clusters")
                     msg = {"msg_type" : "client_commit", "command" : data["command"], "client_id" : cid , "trans_id":data["trans_id"], "commit": True}
                     # print(f"Sending message to server: {msg}")
                     send_msg(network_sock, msg)
                 else:
-                    print(f"PREPARE STATUS: NO from one of the clustures so transaction failed for : {data["command"]}")
+                    print(f"PREPARE STATUS: NO from one of the clusters so transaction failed for : {data['command']}")
                     msg = {"msg_type" : "client_commit", "command" : data["command"], "client_id" : cid , "trans_id":data["trans_id"], "commit": False}
                     # print(f"Sending message to server: {msg}")
                     send_msg(network_sock, msg)
@@ -34,6 +34,10 @@ def handle_server_msg(conn, data):
         return 
     #data = data.decode()
     print(f"Response from server: {data}")
+
+    if data["msg_type"] == MessageType.BALANCE_RESPONSE:
+        print(f"Balance of account {data['account_id']} on server {data['server_id']} is {data['balance']}")
+        return
 
 def recv_msg(conn, addr):
     buffer = ""
@@ -68,10 +72,17 @@ def get_user_input():
             stdout.flush()
 			# exit program with status 0
             _exit(0)
-        with lock:
-            temp_id=trans_id
-            trans_id+=1
-        msg = {"msg_type" : "client_request_init", "command" : user_input, "client_id" : cid, "trans_id": str(cid)+"_"+str(temp_id)}
+
+        # If command is print_balance, print balance of account 
+        # from all servers in the cluster
+        elif cmd == "print_balance":
+            msg = {"msg_type" : MessageType.PRINT_BALANCE, "command" : user_input.split()[1], "client_id" : cid}
+
+        else:
+            with lock:
+                temp_id=trans_id
+                trans_id+=1
+            msg = {"msg_type" : "client_request_init", "command" : user_input, "client_id" : cid, "trans_id": str(cid)+"_"+str(temp_id)}
 
         # print(f"Sending message to server: {msg}")
         send_msg(network_sock, msg)

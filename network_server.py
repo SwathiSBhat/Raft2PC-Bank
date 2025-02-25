@@ -11,7 +11,10 @@ import threading
 from time import sleep
 import config
 import json
-from common_utils import send_msg, get_servers_in_cluster, MessageType, ClientRequestMessage
+from common_utils import ( 
+    send_msg, get_servers_in_cluster, MessageType, ClientRequestMessage,
+    get_cluster_from_dataitem
+)
 import random
 
 server_socks = {}
@@ -104,6 +107,23 @@ def handle_server_msg(conn, data):
             # Forward request to any random alive server in the cluster
             forward_msg(data)
 
+        elif data["msg_type"] == MessageType.PRINT_BALANCE:
+            print(f"[DEBUG] Received print balance request: {data}")
+            # Send message to all alive servers in corresponding cluster
+            cluster = get_cluster_from_dataitem(data["command"])
+            for i in get_servers_in_cluster(cluster):
+                if(alive_servers.get(i, False) == True):
+                    send_msg(server_socks[i], data)
+
+        elif data["msg_type"] == MessageType.BALANCE_RESPONSE:
+            # Send response to client
+            dest_id = data["client_id"]
+            if dest_id not in client_socks:
+                print(f"[CONNECTION] client {dest_id} not connected")
+            else:
+                print(f"[DEBUG] Forwarding message to client {dest_id}")
+                send_msg(client_socks[dest_id], data)
+
         elif data["msg_type"] == "server_exit":
             # Server exit: Server <node_id> has exited
             node_id = int(data["node_id"])
@@ -117,8 +137,10 @@ def handle_server_msg(conn, data):
             else:
                 print(f"[DEBUG] Forwarding message to client {dest_id}")
                 send_msg(client_socks[dest_id], data)
+
         elif data["msg_type"] == "client_commit":
             forward_msg(data)
+
         # Forward message to destination server in the cluster
         else:
             dest_id = data["dest_id"]
@@ -178,6 +200,7 @@ def get_user_input():
                 if addr[1] == node_id:
                     sock.close()
                     print(f"[CONNECTION] Killed server node with node_id: {node_id}")
+                    alive_servers[node_id] = False
                     break
                 
         elif cmd == "failLink":
@@ -190,6 +213,7 @@ def get_user_input():
                 config.LINKS[(node_id1, node_id2)] = False
             else:
                 config.LINKS[(node_id2, node_id1)] = False
+                
         elif cmd == "fixLink":
             # fixLink <node_id1> <node_id2>
             node_id1 = int(user_input.split()[1])

@@ -20,3 +20,5 @@ class MessageType:
     CLIENT_REQUEST = "client_request"
     CLIENT_RESPONSE = "client_response"
     CLIENT_COMMIT = "client_commit"
+    PRINT_BALANCE = "print_balance"
+    BALANCE_RESPONSE = "balance_response"

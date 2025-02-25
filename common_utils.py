@@ -1,9 +1,20 @@
-import threading
-from time import sleep
 import json
 from constants import MessageType
-import pickle
-import config
+
+def get_cluster_from_dataitem(data_item):
+	'''
+	Return the cluster to which the data item belongs
+	'''
+	data_item = int(data_item)
+	if data_item < 1:
+		print("[ERROR] Data item cannot be less than 1")
+		return -1
+	if data_item <= 1000:
+		return 1
+	elif data_item <= 2000:
+		return 2
+	else:
+		return 3
 
 def get_cluster(server_id):
 	'''

@@ -129,14 +129,15 @@ class RaftConsensus:
         '''
         if self.state == constants.RaftState.LEADER:
             for server in self.connected_servers:
-                # TODO - Heartbeat is basically append_entries with empty log
-                if(self.server_commit_index[server]>=self.commit_index and self.pending_request==0 ):
+                
+                # If the follower's log is up to date, send a lightweight heartbeat message
+                # since it doesn't need to update any logs
+                if (self.server_commit_index[server] >= self.commit_index and self.pending_request == 0 ):
                     msg = HeartbeatMessage(self.pid, server, self.term).get_message()
                     send_msg(self.network_server_conn, msg)
+                
+                # If the follower's log is not up to date, send append entries message
                 else:
-                    #self.next_index[msg["sender_server_id"]] -= 1
-                    #self.send_append_entries(msg)
-                    #server = msg['sender_server_id']
                     msg = AppendEntriesMessage(
                             server, 
                             self.term, 
@@ -146,7 +147,6 @@ class RaftConsensus:
                             self.log[self.next_index[server]:], 
                             self.commit_index).get_message()
                     send_msg(self.network_server_conn, msg)
-            #sleep(0.5)
 
     def handle_message(self, msg):
         if msg["msg_type"] == constants.MessageType.VOTE_REQUEST:
@@ -193,7 +193,7 @@ class RaftConsensus:
                     self.processing_ids[cmd[0]]-=1
                     self.processing_ids[cmd[1]]-=1
                     self.conditional_lock_state_machine.notify_all()
-                print(f"SENT SUCCESS message for Two-PC message to Client: {msg["client_id"]} for trans:{msg["command"]} {self.processing_ids} {cmd}")
+                print(f"SENT SUCCESS message for Two-PC message to Client: {msg['client_id']} for trans:{msg['command']} {self.processing_ids} {cmd}")
                 msg= ClientResponseMessage(msg["command"],
                                             self.pid,
                                             msg["client_id"],
@@ -204,7 +204,7 @@ class RaftConsensus:
                     self.processing_ids[cmd[0]]-=1
                     self.processing_ids[cmd[1]]-=1
                     self.conditional_lock_state_machine.notify_all()
-                print(f"SENT Failed message for Two-PC message to Client: {msg["client_id"]} for trans: {msg["command"]}")
+                print(f"SENT Failed message for Two-PC message to Client: {msg['client_id']} for trans: {msg['command']}")
                 msg= ClientResponseMessage(msg["command"],
                                             self.pid,
                                             msg["client_id"],
@@ -216,7 +216,7 @@ class RaftConsensus:
             #this might be the case, when prepare phase has aborted due to lock or amt 
             #print("Something has gone wrong PLEASE CHECK!!!!: inside two pc_handle ", msg , self.two_pc_log)
             #raise ValueError(f"Something has gone wrong PLEASE CHECK!!!!: {msg} inisde two_pc handle")
-            print(f"SENT Failed message for Two-PC message to Client: {msg["client_id"]} for trans: {msg["command"]}")
+            print(f"SENT Failed message for Two-PC message to Client: {msg['client_id']} for trans: {msg['command']}")
             msg= ClientResponseMessage(msg["command"],
                                             self.pid,
                                             msg["client_id"],
