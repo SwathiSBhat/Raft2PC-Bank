@@ -1,4 +1,11 @@
- ## Tests
+## TODOs
+1. Partitioning
+2. Performance and throughput functions
+3. PrintDataStore function
+4. Support float for amt
+5. Fix transactions with amt = balance
+
+## Tests
 ### 1. Concurrent intra-shard with independent items in single cluster
 client 1:
 1,2,1

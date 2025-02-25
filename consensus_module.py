@@ -41,7 +41,7 @@ class RaftConsensus:
         self.last_log_writtern_disk = 0
         # Initialize election timeout to some random value
         self.election_timeout = random.uniform(
-            2.0, 4.0) + 2*config.NETWORK_DELAY
+            1.0, 4.0) + 2*config.NETWORK_DELAY
 
         # Lock to ensure only one thread updates the logs and vote count
         self.lock = threading.Lock()
@@ -185,6 +185,7 @@ class RaftConsensus:
             if (msg["commit"] == True):
                 if (cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000):
                     amt = self.state_machine_read(cmd[0])
+                    # If balance is low but 2PC has sent a commit, something is wrong
                     if (amt < cmd[2]):
                         with self.conditional_lock_state_machine:
                             self.processing_ids[cmd[0]] -= 1
@@ -194,6 +195,7 @@ class RaftConsensus:
                               amt, " for transaction: ", log_entry.command)
                         raise ValueError(
                             f"Something has gone wrong PLEASE CHECK!!!!: balance amount is low {amt} for transaction: {log_entry.command}")
+                    # Update balance with new transaction amount
                     self.state_machine_write(cmd[0], amt - cmd[2])
                     
                 elif (cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster) * 1000):
@@ -241,7 +243,6 @@ class RaftConsensus:
         Send vote request to all servers
         '''
         # If current state is leader, don't start election
-        # TODO - Make sure this doesn't cause problems
         if self.state == constants.RaftState.LEADER:
             return
         self.state = constants.RaftState.CANDIDATE
@@ -285,7 +286,7 @@ class RaftConsensus:
         '''
         sender_server_id = msg["candidate_id"]
         vote = False
-        # print( msg["term"] > self.term , msg["term"] == self.term , self.voted_for, msg["last_log_index"] , self.last_log_index , msg["last_log_term"], self.last_log_term , " vote request \n\n")
+
         if msg["term"] > self.term or \
             ((msg["term"] == self.term and (self.voted_for is None or self.voted_for == sender_server_id)) and
              (msg["last_log_index"] >= self.last_log_index and msg["last_log_term"] >= self.last_log_term)):
@@ -293,7 +294,6 @@ class RaftConsensus:
             self.term = msg["term"]
             self.voted_for = sender_server_id
             self.leader = sender_server_id
-            # TODO - reset election timer. Will need changes since heartbeat will also reset election timer
             self.reset_election_timer()
             vote = True
             print(f"Voted for server {sender_server_id} in term {self.term}")
@@ -352,7 +352,6 @@ class RaftConsensus:
         '''
         If heartbeat received from leader, reset election timer
         '''
-        # TODO - Check conditions for valid heartbeat
         self.leader = msg["sender_server_id"]
         self.reset_election_timer()
 
@@ -363,14 +362,17 @@ class RaftConsensus:
         2. Send append entries to all servers
         '''
         cmd = list(map(int, msg["command"].split(",")))
-        # print(cmd ,msg , " : cmd value before cond lock")
+        
         with self.conditional_lock_state_machine:
-            # print(self.processing_ids , cmd, " before loop \n\n")
+            # If either sender or receiver is locked i.e as part of another transaction 
+            # wait until the transaction is completed
             while (self.processing_ids[cmd[0]] != 0 or self.processing_ids[cmd[1]] != 0):
                 print(
                     f" STUCK in this this loop {cmd} {self.processing_ids} in line 345\n\n")
-                # print((cmd[0]>(self.cluster-1) *1000 and cmd[0]<=(self.cluster) *1000) ,not (cmd[1]>(self.cluster-1) *1000 and cmd[1]<=(self.cluster) *1000) , " this is the status" )
-                if (((cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000) and not (cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster) * 1000)) or (not (cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000) and (cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster) * 1000))):
+                
+                # If it's a cross-shard transaction, 
+                if (((cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000) and not (cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster) * 1000)) or \
+                    (not (cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000) and (cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster) * 1000))):
                     send_prepare_status = True
                     msg = ClientResponseMessage(msg["command"],
                                                 self.pid,
@@ -385,6 +387,7 @@ class RaftConsensus:
 
         if (cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000):
             amt = self.state_machine_read(cmd[0])
+            # If sender's balance is low, reject the transaction
             if (amt < cmd[2]):
                 self.pending_request -= 1
                 send_prepare_status = not (
@@ -402,6 +405,7 @@ class RaftConsensus:
                 send_msg(self.network_server_conn, msg)
                 return
 
+        # Else, append command to local log and send append entries to all followers
         with self.lock:
             logEntry = LogEntry(
                 self.term, msg["command"], self.last_log_index + 1, msg["client_id"], msg["trans_id"])
@@ -469,14 +473,9 @@ class RaftConsensus:
                 False).get_message()
             send_msg(self.network_server_conn, msg)
             return
-        # print(self.log , msg["entries"] ,msg["prev_log_index"], len(self.log)  , " check the status values")
-        # Append any new entries not already in the log
-        # self.log = self.log[:msg["prev_log_index"] + 1] + [LogEntry.from_dict(i) for  i in msg["entries"]]
-        # Advance state machine by applying newly committed entries
-        # self.commit_index = msg["commit_index"]
+
         with self.lock:
-            # Append any new entries not already in the log
-            # + [LogEntry.from_dict(i) for  i in msg["entries"]]
+            # Append any new entries not already in the log and delete conflicting entries
             self.log = self.log[:msg["prev_log_index"] + 1]
             n = len(self.log)
             j_temp = msg["prev_log_index"] + 1
@@ -487,6 +486,8 @@ class RaftConsensus:
                     self.log.append(LogEntry.from_dict(i))
 
                 cmd = list(map(int, self.log[j_temp].command.split(",")))
+                # If it's a cross-shard transaction, add it to 2PC log and
+                # wait until resources are available to process it
                 if (msg["commit_index"] < j_temp and not (cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000) or not (cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster) * 1000)):
                     if (self.log[j_temp].id not in self.two_pc_log):
                         self.two_pc_log[self.log[j_temp].id] = self.log[j_temp]
@@ -499,6 +500,7 @@ class RaftConsensus:
                             self.processing_ids[cmd[0]] += 1
                             self.processing_ids[cmd[1]] += 1
                 j_temp += 1
+                
             for i in range(self.commit_index+1, msg["commit_index"]+1):
                 log_entry = self.log[i]
                 cmd = list(map(int, log_entry.command.split(",")))
@@ -516,6 +518,7 @@ class RaftConsensus:
                             self.processing_ids[cmd[0]] += 1
                             self.processing_ids[cmd[1]] += 1
                     continue
+                
                 with self.conditional_lock_state_machine:
                     # TODO - check if this wait is required??
                     while (self.processing_ids[cmd[0]] != 0 or self.processing_ids[cmd[1]] != 0):
@@ -574,13 +577,6 @@ class RaftConsensus:
         2. If response is not successful, decrement nextIndex and retry
         '''
         if msg["success"]:
-            # Update nextIndex for follower
-            # self.next_index[msg["sender_server_id"]] += 1
-            # Mark log entry as committed if it is stored in majority of servers
-            # and atleast 1 entry of current term is stored in majority of servers
-            # For the first entry of current term, commit it only after the next entry is stored in a majority
-            # of servers
-            # TODO - Implement this
             # since we have only 3 servers in cluster this should work
             # NOTE below will not work if there are more then 3 server in a cluster
             # self.commit_index+=1
@@ -670,7 +666,6 @@ class RaftConsensus:
         Read current term, votedFor, log from disk
         '''
         filename = f'{config.FILEPATH}/server_{self.pid}.txt'
-        # TODO - Read log from disk and load in correct LogEntry format
 
         if os.path.exists(filename):
             with open(filename, 'r') as file:
@@ -713,8 +708,7 @@ class RaftConsensus:
         # write\update database based on ID
         # '''
         filename = f'{config.FILEPATH}/stateMachine_{self.pid}.txt'
-        # TODO - Read log from disk and load in correct LogEntry format
-        # print(row_id,val , " write these values\n\n")
+        
         if not os.path.exists(filename):
             # data = np.random.randint(0, 100, size=100, dtype=np.int64)
             with open(filename, 'wb') as file:
