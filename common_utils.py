@@ -45,10 +45,11 @@ def get_servers_in_cluster(cluster, server_id=None):
     return servers
 
 
-def send_msg(conn, msg):
+def send_msg(conn, msg, sender_id=None):
     '''
     Send message to the server
     '''
+    msg["sender_id"] = sender_id
     msg = json.dumps(msg) + "\n"
     # Add delay to simulate network latency
     # sleep(config.NETWORK_DELAY)

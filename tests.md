@@ -4,6 +4,7 @@
 3. PrintDataStore function
 4. Support float for amt
 5. Fix transactions with amt = balance
+6. Elections are overlapping a lot
 
 ## Tests
 ### 1. Concurrent intra-shard with independent items in single cluster

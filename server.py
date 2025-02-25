@@ -22,7 +22,7 @@ def handle_server_msg(conn, data):
         msg = {"msg_type": MessageType.BALANCE_RESPONSE, "balance": balance,
                "client_id": data["client_id"], "account_id": data["command"], "server_id": pid}
         # send response to network server
-        send_msg(network_sock, msg)
+        send_msg(network_sock, msg, pid)
         return
 
     sleep(config.NETWORK_DELAY)
@@ -64,7 +64,7 @@ def get_user_input():
         if cmd == "exit":
             # send msg to network server about exit so that it can be marked as down
             msg = {"msg_type": "server_exit", "node_id": pid}
-            send_msg(network_sock, msg)
+            send_msg(network_sock, msg, pid)
             stdout.flush()
             # exit program with status 0
             _exit(0)
@@ -111,7 +111,7 @@ if __name__ == "__main__":
         network_sock, (SERVER_IP, config.NETWORK_SERVER_PORT))).start()
     # Send test message to network server
     msg = {"msg_type": "init", "node_id": pid}
-    send_msg(network_sock, msg)
+    send_msg(network_sock, msg, pid)
 
     # Create Raft consensus object for current server
     raft = RaftConsensus(pid, network_sock)

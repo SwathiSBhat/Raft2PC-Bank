@@ -44,17 +44,14 @@ def forward_msg(data):
 
     if from_cluster == to_cluster:
         # intra-shard
-        # create CLIENT_REQUEST message to random alive server in the cluster
-        # send the message to the server
-        dest_id = random.choice(get_servers_in_cluster(from_cluster))
-
-        while alive_servers.get(dest_id, False) == False:
-            dest_id = random.choice(get_servers_in_cluster(from_cluster))
-
-        print(f"[DEBUG] Forwarding intra-shard message to server {dest_id}")
-        msg = ClientRequestMessage(
-            command, data["client_id"], dest_id, data["trans_id"])
-        send_msg(server_socks[dest_id], msg.get_message())
+        # Send message to all alive servers in the corresponding cluster
+        # This will help with the partitioning scenario
+        for i in get_servers_in_cluster(from_cluster):
+            if (alive_servers.get(i, False) == True):
+                msg = ClientRequestMessage(
+                    command, data['client_id'], i, data['trans_id'])
+                print(f"[DEBUG] Forwarding intra-shard message to server {i}")
+                send_msg(server_socks[i], msg.get_message())
 
     else:
         if (data["msg_type"] == "client_commit"):
@@ -66,25 +63,24 @@ def forward_msg(data):
                 if (alive_servers.get(i, False) == True):
                     send_msg(server_socks[i], data)
         else:
-            # inter-shard
-            # create CLIENT_REQUEST message to random alive server in the cluster
-            # send the message to the server
-            dest_id1 = random.choice(get_servers_in_cluster(from_cluster))
-            while alive_servers.get(dest_id1, False) == False:
-                dest_id1 = random.choice(get_servers_in_cluster(from_cluster))
-
-            dest_id2 = random.choice(get_servers_in_cluster(to_cluster))
-            while alive_servers.get(dest_id2, False) == False:
-                dest_id2 = random.choice(get_servers_in_cluster(to_cluster))
-
-            msg = ClientRequestMessage(
-                command, data["client_id"], dest_id1, data["trans_id"])
-            send_msg(server_socks[dest_id1], msg.get_message())
-            msg = ClientRequestMessage(
-                command, data["client_id"], dest_id2, data["trans_id"])
-            send_msg(server_socks[dest_id2], msg.get_message())
-            print(
-                f"[DEBUG] Forwarding inter-shard message to server {dest_id1} and {dest_id2}")
+            # cross-shard
+            # Send message to all alive servers in the corresponding clusters
+            # This will help with the partitioning scenario
+            for i in get_servers_in_cluster(from_cluster):
+                if (alive_servers.get(i, False) == True):
+                    msg = ClientRequestMessage(
+                        command, data['client_id'], i, data['trans_id'])
+                    print(
+                        f"[DEBUG] Forwarding inter-shard message to server {i}")
+                    send_msg(server_socks[i], msg.get_message())
+                    
+            for i in get_servers_in_cluster(to_cluster):
+                if (alive_servers.get(i, False) == True):
+                    msg = ClientRequestMessage(
+                        command, data['client_id'], i, data['trans_id'])
+                    print(
+                        f"[DEBUG] Forwarding inter-shard message to server {i}")
+                    send_msg(server_socks[i], msg.get_message())
 
 
 def handle_server_msg(conn, data):
@@ -107,7 +103,7 @@ def handle_server_msg(conn, data):
             print(f"[CONNECTION] Connected to client {client_id}")
 
         elif data["msg_type"] == "client_request_init":
-            # Forward request to any random alive server in the cluster
+            # Forward request to all alive servers in the corresponding cluster
             forward_msg(data)
 
         elif data["msg_type"] == MessageType.PRINT_BALANCE:
@@ -147,7 +143,11 @@ def handle_server_msg(conn, data):
         # Forward message to destination server in the cluster
         else:
             dest_id = data["dest_id"]
-            if dest_id not in server_socks or alive_servers[dest_id] == False:
+            src_id = data["sender_id"]
+            # Don't forward if server is not alive or link is down
+            if dest_id not in server_socks or alive_servers[dest_id] == False or \
+                config.LINKS.get((src_id, dest_id), True) == False or \
+                config.LINKS.get((dest_id, src_id), True) == False:
                 print(f"[CONNECTION] Server {dest_id} not connected")
             else:
                 print(
@@ -199,7 +199,7 @@ def get_user_input():
             # exit program with status 0
             _exit(0)
 
-        elif cmd == "failNode":
+        elif cmd == "fail_node":
             # failNode <node_id>
             node_id = int(user_input.split()[1])
             # kill the server node with the given node_id
@@ -210,8 +210,34 @@ def get_user_input():
                         f"[CONNECTION] Killed server node with node_id: {node_id}")
                     alive_servers[node_id] = False
                     break
+                
+        elif cmd == "fail_node_links":
+            # Fail all links to the given node_id
+            node_id = int(user_input.split()[1])
+            servers = get_servers_in_cluster(get_cluster_from_dataitem(node_id))
+            for i in servers:
+                if i != node_id:
+                    if i < node_id:
+                        config.LINKS[(i, node_id)] = False
+                    else:
+                        config.LINKS[(node_id, i)] = False
+                    print(
+                        f"[CONNECTION] Killed link between server {i} and server {node_id}")
+                    
+        elif cmd == "fix_node_links":
+            # Fix all links to the given node_id
+            node_id = int(user_input.split()[1])
+            servers = get_servers_in_cluster(get_cluster_from_dataitem(node_id))
+            for i in servers:
+                if i != node_id:
+                    if i < node_id:
+                        config.LINKS[(i, node_id)] = True
+                    else:
+                        config.LINKS[(node_id, i)] = True
+                    print(
+                        f"[CONNECTION] Fixed link between server {i} and server {node_id}")
 
-        elif cmd == "failLink":
+        elif cmd == "fail_link":
             # failLink <node_id1> <node_id2>
             node_id1 = int(user_input.split()[1])
             node_id2 = int(user_input.split()[2])
@@ -219,10 +245,14 @@ def get_user_input():
             # Update the status of the link between the two servers from config dictionary
             if node_id1 < node_id2:
                 config.LINKS[(node_id1, node_id2)] = False
+                print(
+                    f"[CONNECTION] Killed link between server {node_id1} and server {node_id2}")
             else:
                 config.LINKS[(node_id2, node_id1)] = False
+                print(
+                    f"[CONNECTION] Killed link between server {node_id2} and server {node_id1}")
 
-        elif cmd == "fixLink":
+        elif cmd == "fix_link":
             # fixLink <node_id1> <node_id2>
             node_id1 = int(user_input.split()[1])
             node_id2 = int(user_input.split()[2])
@@ -230,8 +260,12 @@ def get_user_input():
             # Update the status of the link between the two servers from config dictionary
             if node_id1 < node_id2:
                 config.LINKS[(node_id1, node_id2)] = True
+                print(
+                    f"[CONNECTION] Fixed link between server {node_id1} and server {node_id2}")
             else:
                 config.LINKS[(node_id2, node_id1)] = True
+                print(
+                    f"[CONNECTION] Fixed link between server {node_id2} and server {node_id1}")
 
 
 if __name__ == "__main__":

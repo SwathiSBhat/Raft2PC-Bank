@@ -144,7 +144,7 @@ class RaftConsensus:
                 if (self.server_commit_index[server] >= self.commit_index and self.pending_request == 0):
                     msg = HeartbeatMessage(
                         self.pid, server, self.term).get_message()
-                    send_msg(self.network_server_conn, msg)
+                    send_msg(self.network_server_conn, msg, self.pid)
 
                 # If the follower's log is not up to date, send append entries message
                 else:
@@ -156,7 +156,7 @@ class RaftConsensus:
                         self.log[self.next_index[server] - 1].term,
                         self.log[self.next_index[server]:],
                         self.commit_index).get_message()
-                    send_msg(self.network_server_conn, msg)
+                    send_msg(self.network_server_conn, msg, self.pid)
 
     def handle_message(self, msg):
         if msg["msg_type"] == constants.MessageType.VOTE_REQUEST:
@@ -212,7 +212,7 @@ class RaftConsensus:
                                             self.pid,
                                             msg["client_id"],
                                             True, msg["trans_id"]).get_message()
-                send_msg(self.network_server_conn, msg)
+                send_msg(self.network_server_conn, msg, self.pid)
             else:
                 with self.conditional_lock_state_machine:
                     self.processing_ids[cmd[0]] -= 1
@@ -224,7 +224,7 @@ class RaftConsensus:
                                             self.pid,
                                             msg["client_id"],
                                             False, msg["trans_id"]).get_message()
-                send_msg(self.network_server_conn, msg)
+                send_msg(self.network_server_conn, msg, self.pid)
             with self.lock:
                 del self.two_pc_log[msg["trans_id"]]
         else:
@@ -235,7 +235,7 @@ class RaftConsensus:
                                         self.pid,
                                         msg["client_id"],
                                         False, msg["trans_id"]).get_message()
-            send_msg(self.network_server_conn, msg)
+            send_msg(self.network_server_conn, msg, self.pid)
 
     def start_election(self):
         '''
@@ -257,14 +257,10 @@ class RaftConsensus:
         If leader, append client request to log and send append entries to all servers
         Else, redirect client request to leader
         '''
-        print(f"Received client request: {msg},  leader: {self.leader}")
+        # Process the request only if the server is the leader
         if self.state == constants.RaftState.LEADER:
+            print(f"Received client request: {msg}")
             self.send_append_entries(msg)
-        else:
-            # TODO - if it doesnot know the leader then?? do we need to do election??
-            # Route to leader
-            msg["dest_id"] = self.leader
-            send_msg(self.network_server_conn, msg)
 
     def send_vote_request(self):
         for server in self.connected_servers:
@@ -276,7 +272,7 @@ class RaftConsensus:
                 self.last_log_term).get_message()
             print(
                 f"Sending vote request for term {self.term} to server {server}")
-            send_msg(self.network_server_conn, msg)
+            send_msg(self.network_server_conn, msg, self.pid)
 
     def handle_vote_request(self, msg):
         '''
@@ -304,7 +300,7 @@ class RaftConsensus:
         self.write_to_disk()
         msg = VoteResponseMessage(
             sender_server_id, self.term, vote, self.commit_index).get_message()
-        send_msg(self.network_server_conn, msg)
+        send_msg(self.network_server_conn, msg, self.pid)
 
     def handle_vote_response(self, msg):
         '''
@@ -378,7 +374,7 @@ class RaftConsensus:
                                                 self.pid,
                                                 msg["client_id"],
                                                 False, msg["trans_id"], send_prepare_status).get_message()
-                    send_msg(self.network_server_conn, msg)
+                    send_msg(self.network_server_conn, msg, self.pid)
                     return
                 self.conditional_lock_state_machine.wait()
             self.pending_request += 1
@@ -402,7 +398,7 @@ class RaftConsensus:
                     self.conditional_lock_state_machine.notify_all()
                 print("FAILED Transaction because of insufficient balance: ",
                       amt, " for transaction: ", msg["command"])
-                send_msg(self.network_server_conn, msg)
+                send_msg(self.network_server_conn, msg, self.pid)
                 return
 
         # Else, append command to local log and send append entries to all followers
@@ -426,7 +422,7 @@ class RaftConsensus:
                 self.log[self.next_index[server]:],
                 self.commit_index).get_message()
 
-            send_msg(self.network_server_conn, msg)
+            send_msg(self.network_server_conn, msg, self.pid)
 
     def handle_append_entries(self, msg):
         '''
@@ -446,7 +442,7 @@ class RaftConsensus:
                 self.log[-1].index,
                 self.commit_index,
                 False).get_message()
-            send_msg(self.network_server_conn, msg)
+            send_msg(self.network_server_conn, msg, self.pid)
             return
         elif msg["term"] > self.term:
             self.term = msg["term"]
@@ -471,7 +467,7 @@ class RaftConsensus:
                 self.log[-1].index,
                 self.commit_index,
                 False).get_message()
-            send_msg(self.network_server_conn, msg)
+            send_msg(self.network_server_conn, msg, self.pid)
             return
 
         with self.lock:
@@ -564,7 +560,7 @@ class RaftConsensus:
             self.log[-1].index,
             self.commit_index,
             True).get_message()
-        send_msg(self.network_server_conn, msg)
+        send_msg(self.network_server_conn, msg, self.pid)
         # self.write_to_disk()
         print(f"Server {self.pid} log: {self.log}")
         print(f"Server {self.pid} commit index: {self.commit_index}")
@@ -600,7 +596,7 @@ class RaftConsensus:
                                                      self.pid,
                                                      log_entry.client_id,
                                                      True, log_entry.id, True).get_message()
-                        send_msg(self.network_server_conn, msg1)
+                        send_msg(self.network_server_conn, msg1, self.pid)
                     else:
                         # if(cmd[0]>(self.cluster-1) *1000 and cmd[0]<=(self.cluster) *1000):
                         amt = self.state_machine_read(cmd[0])
@@ -629,7 +625,7 @@ class RaftConsensus:
                                                      self.pid,
                                                      log_entry.client_id,
                                                      True, log_entry.id).get_message()
-                        send_msg(self.network_server_conn, msg1)
+                        send_msg(self.network_server_conn, msg1, self.pid)
                 if (msg["approve_index"] > self.commit_index):
                     self.commit_index += (msg["approve_index"] -
                                           self.commit_index)
@@ -655,7 +651,7 @@ class RaftConsensus:
                     self.log[self.next_index[server] - 1].term,
                     self.log[self.next_index[server]:],
                     self.commit_index).get_message()
-                send_msg(self.network_server_conn, msg)
+                send_msg(self.network_server_conn, msg, self.pid)
                 print("resent message")
         print("done with handle_append_entries_response")
         self.write_to_disk()
