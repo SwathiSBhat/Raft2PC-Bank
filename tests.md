@@ -136,3 +136,6 @@ Should abort
 ### Cross-shard with amt > balance for 1 of them
 Should abort
 
+### Intra-shard with amt = balance
+
+### Cross-shard with amt = balance
