@@ -40,8 +40,7 @@ class RaftConsensus:
         self.log = [LogEntry(self.term, "", self.last_log_index, -1)]
         self.last_log_writtern_disk = 0
         # Initialize election timeout to some random value
-        self.election_timeout = random.uniform(
-            1.0, 4.0) + 2*config.NETWORK_DELAY
+        self.election_timeout = (self.pid)%3 + 2*config.NETWORK_DELAY#random.uniform(1.0, 4.0) + 2*config.NETWORK_DELAY
 
         # Lock to ensure only one thread updates the logs and vote count
         self.lock = threading.Lock()
@@ -181,7 +180,7 @@ class RaftConsensus:
         if (msg["trans_id"] in self.two_pc_log):
             with self.lock:
                 log_entry = self.two_pc_log[msg["trans_id"]]
-            cmd = list(map(int, log_entry.command.split(",")))
+            cmd = [int(x) if i < 2 else float(x) for i, x in enumerate(log_entry.command.split(','))]#list(map(int, log_entry.command.split(",")))
             if (msg["commit"] == True):
                 if (cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000):
                     amt = self.state_machine_read(cmd[0])
@@ -327,7 +326,7 @@ class RaftConsensus:
                     # acquire lock to all the pending commits
                     for i in range(self.commit_index+1, len(self.log)):
                         log_entry = self.log[i]
-                        cmd = list(map(int, log_entry.command.split(",")))
+                        cmd = [int(x) if i < 2 else float(x) for i, x in enumerate(log_entry.command.split(','))]#list(map(float, log_entry.command.split(",")))
                         with self.conditional_lock_state_machine:
                             self.processing_ids[cmd[0]] += 1
                             self.processing_ids[cmd[1]] += 1
@@ -363,7 +362,7 @@ class RaftConsensus:
         1. Append command to local log
         2. Send append entries to all servers
         '''
-        cmd = list(map(int, msg["command"].split(",")))
+        cmd = [int(x) if i < 2 else float(x) for i, x in enumerate(msg["command"].split(','))]#list(map(int, msg["command"].split(",")))
         
         with self.conditional_lock_state_machine:
             # If either sender or receiver is locked i.e as part of another transaction 
@@ -487,7 +486,7 @@ class RaftConsensus:
                 else:
                     self.log.append(LogEntry.from_dict(i))
 
-                cmd = list(map(int, self.log[j_temp].command.split(",")))
+                cmd = [int(x) if i < 2 else float(x) for i, x in enumerate(self.log[j_temp].command.split(','))]#list(map(int, self.log[j_temp].command.split(",")))
                 # If it's a cross-shard transaction, add it to 2PC log and
                 # wait until resources are available to process it
                 if (msg["commit_index"] < j_temp and not (cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000) or not (cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster) * 1000)):
@@ -505,20 +504,20 @@ class RaftConsensus:
                 
             for i in range(self.commit_index+1, msg["commit_index"]+1):
                 log_entry = self.log[i]
-                cmd = list(map(int, log_entry.command.split(",")))
+                cmd = [int(x) if i < 2 else float(x) for i, x in enumerate(log_entry.command.split(','))]#list(map(int, log_entry.command.split(",")))
                 if (not (cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000) or not (cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster) * 1000)):
                     # self.two_pc_log[log_entry.id] = log_entry
-
-                    if (log_entry.id not in self.two_pc_log):
-                        self.two_pc_log[log_entry.id] = log_entry
-                        with self.conditional_lock_state_machine:
-                            # TODO - check if this wait is required??
-                            while (self.processing_ids[cmd[0]] != 0 or self.processing_ids[cmd[1]] != 0):
-                                print(
-                                    f"STUCK in this this loop {cmd} {self.processing_ids} {self.log}in line 472\n\n")
-                                self.conditional_lock_state_machine.wait()
-                            self.processing_ids[cmd[0]] += 1
-                            self.processing_ids[cmd[1]] += 1
+                    # print(self.two_pc_log, log_entry , i , len(self.log) , " second time it came")
+                    # if (log_entry.id not in self.two_pc_log):
+                    #     self.two_pc_log[log_entry.id] = log_entry
+                    #     with self.conditional_lock_state_machine:
+                    #         # TODO - check if this wait is required??
+                    #         while (self.processing_ids[cmd[0]] != 0 or self.processing_ids[cmd[1]] != 0):
+                    #             print(
+                    #                 f"STUCK in this this loop {cmd} {self.processing_ids} {self.log}in line 474\n\n")
+                    #             self.conditional_lock_state_machine.wait()
+                    #         self.processing_ids[cmd[0]] += 1
+                    #         self.processing_ids[cmd[1]] += 1
                     continue
                 
                 with self.conditional_lock_state_machine:
@@ -593,7 +592,7 @@ class RaftConsensus:
                                              ] = msg["sender_commit_index"]
                 for i in range(self.commit_index+1, msg["approve_index"]+1):
                     log_entry = self.log[i]
-                    cmd = list(map(int, log_entry.command.split(",")))
+                    cmd = [int(x) if i < 2 else float(x) for i, x in enumerate(log_entry.command.split(','))]#list(map(int, log_entry.command.split(",")))
                     if (not (cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000) or not (cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster) * 1000)):
                         with self.conditional_lock_state_machine:
                             self.pending_request -= 1
@@ -692,7 +691,7 @@ class RaftConsensus:
             with open(filename, 'r+b') as file:
                 row_offset = row_id - (self.cluster-1) * 1000
                 file.seek((row_offset-1) * 16)
-                row = struct.unpack('qq', file.read(16))
+                row = struct.unpack('dd', file.read(16))
                 # value = struct.unpack('q', file.read(8))[0]
                 # print(row ," row read")
                 value = row[1]  # int(row.split()[1])
@@ -718,11 +717,11 @@ class RaftConsensus:
                 # for now creating the random file but we need to have the actual file
                 for i in range(st, st+1000):
                     # file.write(f"{struct.pack('q', i)} {struct.pack('q', 10)}\n".encode())
-                    file.write(struct.pack('qq', np.int64(i), np.int64(10)))
+                    file.write(struct.pack('dd', np.float64(i), np.float64(10)))
 
-        if (val):
+        if (val!=None):
             with open(filename, 'r+b') as file:
                 offset = 0
                 row_offset = row_id - (self.cluster-1) * 1000
                 file.seek((row_offset-1) * 16)
-                file.write(struct.pack('qq', np.int64(row_id), np.int64(val)))
+                file.write(struct.pack('dd', np.float64(row_id), np.float64(val)))
