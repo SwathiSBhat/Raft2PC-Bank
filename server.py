@@ -73,20 +73,6 @@ def get_user_input():
         elif cmd == "print":
             id = int(user_input.split()[1])
             print(raft.state_machine_read(id))
-        # TODO - The below commands can be removed once the client is implemented
-        elif cmd == "intra-shard":
-            # intra-shard <from account> <to account> <amount>
-            # The balance for both accounts is stored in same cluster
-            # Use Raft to achieve concensus within the cluster
-            from_account = int(user_input.split()[1])
-            to_account = int(user_input.split()[2])
-            amount = int(user_input.split()[3])
-
-        elif cmd == "inter-shard":
-            # inter-shard <from account> <to account> <amount>
-            # The balance for both accounts is stored in different clusters
-            # Use 2PC and Raft to achieve concensus across clusters
-            pass
 
 
 if __name__ == "__main__":

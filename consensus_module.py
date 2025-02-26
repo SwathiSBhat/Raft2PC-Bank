@@ -255,12 +255,18 @@ class RaftConsensus:
     def handle_client_request(self, msg):
         '''
         If leader, append client request to log and send append entries to all servers
-        Else, redirect client request to leader
+        Else, redirect client request to leader        
         '''
-        # Process the request only if the server is the leader
+
+        print(f"Received client request: {msg},  leader: {self.leader}")
         if self.state == constants.RaftState.LEADER:
-            print(f"Received client request: {msg}")
             self.send_append_entries(msg)
+        else:
+            #TODO - if it doesnot know the leader then?? do we need to do election??
+            # Route to leader
+            msg["dest_id"] = self.leader
+            print(f"Routing client request to leader: {self.leader}")
+            send_msg(self.network_server_conn, msg, self.pid)
 
     def send_vote_request(self):
         for server in self.connected_servers:

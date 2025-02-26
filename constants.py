@@ -18,7 +18,16 @@ class MessageType:
     HEARTBEAT = "heartbeat"
     HEARTBEAT_RESPONSE = "heartbeat_response"
     CLIENT_REQUEST = "client_request"
+    CLIENT_REQUEST_INIT = "client_request_init"
     CLIENT_RESPONSE = "client_response"
+    CLIENT_INITIALIZE = "init_client"
     CLIENT_COMMIT = "client_commit"
     PRINT_BALANCE = "print_balance"
     BALANCE_RESPONSE = "balance_response"
+    SERVER_INITIALIZE = "init"
+    
+# Transaction status
+class TransactionStatus:
+    SUCCESS = "success"
+    FAILURE = "failure"
+    PENDING = "pending"

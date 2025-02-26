@@ -147,3 +147,9 @@ Should abort
 ### Intra-shard with amt = balance
 
 ### Cross-shard with amt = balance
+
+### Partition off non-leader and ensure request going to partitioned node is retried
+
+### Recovery from partitioning after partitioning leader
+
+### Recovery from partitioning after partitioning non-leader node

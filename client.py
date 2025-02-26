@@ -9,13 +9,20 @@ import socket
 import config
 import threading
 from common_utils import send_msg, MessageType
+from constants import TransactionStatus
 import json
+from rich.table import Table
 
+# maintain list of transactions and their status
+transactions = {}
+# maintain list of watchdogs conditionals for each transaction
+watchdogs = {}
 
 def handle_server_msg(conn, data):
-    global lock
     global trans_id
     global prev_status_id
+    global transactions
+    
     data = json.loads(data)
     # If prepare status received from server for 2PC, send commit or abort based on how clusters have responded
     if ("prepare_status" in data):
@@ -45,8 +52,22 @@ def handle_server_msg(conn, data):
             f"Balance of account {data['account_id']} on server {data['server_id']} is {data['balance']}")
         return
 
-    print(f"Response from server: {data}")
-
+    elif data["msg_type"] == MessageType.CLIENT_RESPONSE:
+        transaction_id = data['trans_id']
+        
+        with lock:
+            if transaction_id in transactions and transactions[transaction_id] == TransactionStatus.PENDING:
+                if data['status']:
+                    transactions[transaction_id] = TransactionStatus.SUCCESS
+                else:
+                    transactions[transaction_id] = TransactionStatus.FAILURE
+                    
+                # Notify the condition variable so the watchdog thread stops waiting
+                if transaction_id in watchdogs:
+                    with watchdogs[transaction_id]:
+                        watchdogs[transaction_id].notify_all()
+                        
+        print(f"Response from server: {data}")
 
 def recv_msg(conn, addr):
     buffer = ""
@@ -69,11 +90,37 @@ def recv_msg(conn, addr):
             except:
                 print("[ERROR] Exception in handling message at server {pid}")
                 break
-
+            
+def transaction_watchdog(transactionid, msg, timeout=8*config.NETWORK_DELAY):
+    '''
+    Retry transaction if no response received from server within timeout
+    '''
+    global watchdogs
+    
+    condition = threading.Condition()
+    
+    # Store condition for transaction
+    with lock:
+        watchdogs[transactionid] = condition 
+        
+    with condition:
+        success = condition.wait(timeout)
+        if not success:
+            print(f"Transaction {transactionid} timed out. Retrying...")
+            # Retry transaction
+            send_msg(network_sock, msg)
+            # restart the watchdog
+            threading.Thread(target=transaction_watchdog, args=(transactionid, msg)).start()
+        else:
+            print(f"Transaction {transactionid} completed successfully.")
+            # Remove the condition from the dictionary
+            with lock:
+                del watchdogs[transactionid]
 
 def get_user_input():
-    global lock
     global trans_id
+    global transactions
+    
     while True:
         # wait for user input
         user_input = input()
@@ -95,8 +142,15 @@ def get_user_input():
             with lock:
                 temp_id = trans_id
                 trans_id += 1
+            transactionid = str(cid) + "_" + str(temp_id)
             msg = {"msg_type": "client_request_init", "command": user_input,
-                   "client_id": cid, "trans_id": str(cid)+"_"+str(temp_id)}
+                   "client_id": cid, "trans_id": transactionid}
+            with lock:
+                # set transaction status to pending
+                transactions[transactionid] = TransactionStatus.PENDING
+                
+            # start timer watchdog
+            threading.Thread(target=transaction_watchdog, args=(transactionid, msg)).start()
 
         # print(f"Sending message to server: {msg}")
         send_msg(network_sock, msg)
