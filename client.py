@@ -166,7 +166,6 @@ def get_user_input():
             
             for tid in latency:
                 if transactions.get(tid) and transactions[tid] != TransactionStatus.PENDING:
-                    print(f"Adding row for transaction {tid}, {latency[tid]}, {transactions[tid]}")
                     table.add_row(tid, str(latency[tid]), transactions[tid])
 
             console.print(table)
