@@ -149,7 +149,8 @@ def handle_server_msg(conn, data):
             dest_id = data["dest_id"]
             src_id = data["sender_id"]
             print(f"[DEBUG] Forwarding message from server {src_id} to server {dest_id}")
-            print(f"Link status: {config.LINKS}")
+            # print(f"Link status: {config.LINKS}")
+            
             # Don't forward if server is not alive or link is down
             if dest_id not in server_socks or alive_servers[dest_id] == False or \
                 config.LINKS.get((src_id, dest_id), True) == False or \

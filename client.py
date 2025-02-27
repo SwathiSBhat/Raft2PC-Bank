@@ -5,6 +5,7 @@ Client knows the mapping of account shards to server nodes.
 
 from sys import argv, stdout
 from os import _exit
+import os
 import socket
 import config
 import threading
@@ -12,16 +13,23 @@ from common_utils import send_msg, MessageType
 from constants import TransactionStatus
 import json
 from rich.table import Table
+from rich.console import Console
+import time
 
 # maintain list of transactions and their status
 transactions = {}
 # maintain list of watchdogs conditionals for each transaction
 watchdogs = {}
+# maintain list of transactions and their latency
+latency = {}
+
+console = Console()
 
 def handle_server_msg(conn, data):
     global trans_id
     global prev_status_id
     global transactions
+    global latency
     
     data = json.loads(data)
     # If prepare status received from server for 2PC, send commit or abort based on how clusters have responded
@@ -62,12 +70,17 @@ def handle_server_msg(conn, data):
                 else:
                     transactions[transaction_id] = TransactionStatus.FAILURE
                     
+                # Calculate latency
+                latency[transaction_id] = time.perf_counter() - latency[transaction_id]
+                print(f"Latency: {latency[transaction_id]} seconds")
+                    
                 # Notify the condition variable so the watchdog thread stops waiting
                 if transaction_id in watchdogs:
                     with watchdogs[transaction_id]:
                         watchdogs[transaction_id].notify_all()
                         
         print(f"Response from server: {data}")
+        print(f"Latency for transaction {transaction_id} is {latency[transaction_id]} seconds")
 
 def recv_msg(conn, addr):
     buffer = ""
@@ -91,7 +104,7 @@ def recv_msg(conn, addr):
                 print("[ERROR] Exception in handling message at server {pid}")
                 break
             
-def transaction_watchdog(transactionid, msg, timeout=8*config.NETWORK_DELAY):
+def transaction_watchdog(transactionid, msg, timeout=15*config.NETWORK_DELAY):
     '''
     Retry transaction if no response received from server within timeout
     '''
@@ -120,10 +133,16 @@ def transaction_watchdog(transactionid, msg, timeout=8*config.NETWORK_DELAY):
 def get_user_input():
     global trans_id
     global transactions
+    global latency
     
     while True:
         # wait for user input
         user_input = input()
+        
+        # if user input = empty new line, ignore
+        if user_input == "":
+            continue
+        
         cmd = user_input.split()[0]
 
         if cmd == "exit":
@@ -137,6 +156,46 @@ def get_user_input():
             msg = {"msg_type": MessageType.PRINT_BALANCE,
                    "command": user_input.split()[1], "client_id": cid}
 
+        elif cmd == "performance":
+            # Print the latency of non-pending transactions
+            table = Table(title="Transaction Latency", show_header=True, header_style="bold cyan")
+
+            table.add_column("Transaction ID", style="bold", justify="left")
+            table.add_column("Latency (seconds)", style="bold red", justify="right")
+            table.add_column("Transaction Status", style="bold blue", justify="center")
+            
+            for tid in latency:
+                if transactions.get(tid) and transactions[tid] != TransactionStatus.PENDING:
+                    print(f"Adding row for transaction {tid}, {latency[tid]}, {transactions[tid]}")
+                    table.add_row(tid, str(latency[tid]), transactions[tid])
+
+            console.print(table)
+            continue
+        
+        elif cmd == "print_committed_txns":
+            # Print the committed transactions in each server stored in logs
+            for i in range(1, 10):
+                filename = f'{config.FILEPATH}/server_{i}.txt'
+
+                if os.path.exists(filename):
+                    with open(filename, 'r') as file:
+                        commit_index = int(file.readline())
+                        data = json.load(file)
+                        table = Table(title=f"Committed txns in server {i}", show_header=True, header_style="bold black")
+
+                        # Add columns
+                        table.add_column("Term", style="bold", justify="center")
+                        table.add_column("Index", style="bold blue", justify="center")
+                        table.add_column("Command", style="bold red", justify="left")
+
+                        # Filter and add rows (entries with index 1 to 5)
+                        for entry in data[1:commit_index]:
+                            table.add_row(str(entry["term"]), str(entry["index"]), entry["command"])
+
+                        # Print the table
+                        console.print(table)
+            continue            
+            
         else:
             # Transaction ID = clientId_transId
             with lock:
@@ -148,13 +207,13 @@ def get_user_input():
             with lock:
                 # set transaction status to pending
                 transactions[transactionid] = TransactionStatus.PENDING
+                # start timer for latency setting to current time
+                latency[transactionid] = time.perf_counter()
                 
             # start timer watchdog
             threading.Thread(target=transaction_watchdog, args=(transactionid, msg)).start()
 
-        # print(f"Sending message to server: {msg}")
         send_msg(network_sock, msg)
-
 
 if __name__ == "__main__":
 
