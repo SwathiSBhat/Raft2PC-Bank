@@ -207,22 +207,23 @@ class AppendEntriesResponseMessage():
 
 
 class LogEntry:
-    def __init__(self, term, command, index, client_id, id=None):
+    def __init__(self, term, command, index, client_id, id=None ,status=-1):
         self.term = term
         self.command = command
         self.index = index
         self.client_id = client_id
         self.id = id
+        self.status = status # -1->pending 1->success 0-> failure
 
     @classmethod
     def from_dict(cls, data):
-        return cls(data['term'], data['command'], data['index'], data['client_id'], data['id'])
+        return cls(data['term'], data['command'], data['index'], data['client_id'], data['id'],data['status'])
 
     def __repr__(self):
-        return f"LogEntry(term={self.term}, command={self.command}, index={self.index}, client_id={self.client_id})"
+        return f"LogEntry(term={self.term}, command={self.command}, index={self.index}, client_id={self.client_id}, id={self.id}, status={self.status})"
 
     def __str__(self):
-        return f"LogEntry(term={self.term}, command={self.command}, index={self.index}, client_id={self.client_id})"
+        return f"LogEntry(term={self.term}, command={self.command}, index={self.index}, client_id={self.client_id}, id={self.id}, status={self.status})"
 
     def __eq__(self, other):
         return self.term == other.term and self.index == other.index and self.client_id == other.client_id
@@ -232,4 +233,4 @@ class LogEntry:
 
     def to_json(self):
         # return self.__dict__
-        return {"term": self.term, "command": self.command, "index": self.index, "client_id": self.client_id, "id": self.id}
+        return {"term": self.term, "command": self.command, "index": self.index, "client_id": self.client_id, "id": self.id, "status": self.status}

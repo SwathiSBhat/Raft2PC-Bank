@@ -180,7 +180,7 @@ def get_user_input():
                     with open(filename, 'r') as file:
                         commit_index = int(file.readline())
                         data = json.load(file)
-                        table = Table(title=f"Committed txns in server {i}", show_header=True, header_style="bold black")
+                        table = Table(title=f"Committed txns in server {i}", show_header=True, header_style="bold white")
 
                         # Add columns
                         table.add_column("Term", style="bold", justify="center")
@@ -188,8 +188,9 @@ def get_user_input():
                         table.add_column("Command", style="bold red", justify="left")
 
                         # Filter and add rows (entries with index 1 to 5)
-                        for entry in data[1:commit_index]:
-                            table.add_row(str(entry["term"]), str(entry["index"]), entry["command"])
+                        for entry in data[1:commit_index+1]:
+                            if(entry["status"]==1):
+                                table.add_row(str(entry["term"]), str(entry["index"]), entry["command"])
 
                         # Print the table
                         console.print(table)
