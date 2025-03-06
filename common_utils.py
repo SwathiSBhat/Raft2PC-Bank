@@ -234,3 +234,16 @@ class LogEntry:
     def to_json(self):
         # return self.__dict__
         return {"term": self.term, "command": self.command, "index": self.index, "client_id": self.client_id, "id": self.id, "status": self.status}
+
+class Colors:
+    VIOLET = '\033[94m'
+    BLUE = '\033[36m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'    # yellow
+    ERROR = '\033[91m'   # red
+    ENDCOLOR = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+    GRAY = '\033[90m'
+    SUCCESS = '\033[42m'
+    FAILED = '\033[41m'

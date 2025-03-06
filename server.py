@@ -26,11 +26,8 @@ def handle_server_msg(conn, data):
         return
 
     sleep(config.NETWORK_DELAY)
-    # try:
-    raft.handle_message(data)
-    # except:
-    #    print("Exception in handling message from network server")
 
+    raft.handle_message(data)
 
 def recv_msg(conn, addr):
     buffer = ""

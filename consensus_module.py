@@ -10,7 +10,7 @@ import numpy as np
 from common_utils import (
     send_msg, LogEntry, HeartbeatMessage,
     VoteResponseMessage, VoteRequestMessage, AppendEntriesMessage,
-    AppendEntriesResponseMessage, ClientResponseMessage
+    AppendEntriesResponseMessage, ClientResponseMessage, Colors
 )
 from time import sleep
 import config
@@ -40,7 +40,7 @@ class RaftConsensus:
         self.log = [LogEntry(self.term, "", self.last_log_index, -1)]
         self.last_log_writtern_disk = 0
         # Initialize election timeout to some random value
-        self.election_timeout = (self.pid)%3 + 2*config.NETWORK_DELAY#random.uniform(1.0, 4.0) + 2*config.NETWORK_DELAY
+        self.election_timeout = (self.pid)%3 + 2*config.NETWORK_DELAY + 0.6 
 
         # Lock to ensure only one thread updates the logs and vote count
         self.lock = threading.Lock()
@@ -210,7 +210,7 @@ class RaftConsensus:
                     self.processing_ids[cmd[1]] -= 1
                     self.conditional_lock_state_machine.notify_all()
                 print(
-                    f"SENT SUCCESS message for Two-PC message to Client: {msg['client_id']} for trans:{msg['command']} {self.processing_ids} {cmd}")
+                    f"{Colors.BLUE}Sent COMMIT message for Two-PC message to Client: {msg['client_id']} for trans: {cmd}{Colors.ENDCOLOR}")
                 msg = ClientResponseMessage(msg["command"],
                                             self.pid,
                                             msg["client_id"],
@@ -224,19 +224,18 @@ class RaftConsensus:
                     self.processing_ids[cmd[1]] -= 1
                     self.conditional_lock_state_machine.notify_all()
                 print(
-                    f"SENT Failed message for Two-PC message to Client: {msg['client_id']} for trans: {msg['command']}")
+                    f"{Colors.BLUE}Sent ABORT message for Two-PC message to Client: {msg['client_id']} for trans: {cmd}{Colors.ENDCOLOR}")
                 msg = ClientResponseMessage(msg["command"],
                                             self.pid,
                                             msg["client_id"],
                                             False, msg["trans_id"]).get_message()
                 send_msg(self.network_server_conn, msg, self.pid)
-            #with self.lock:
-            #    del self.two_pc_log[msg["trans_id"]]
+
             self.write_to_disk(True)
         else:
             # this might be the case, when prepare phase has aborted due to lock or amt
             print(
-                f"SENT Failed message for Two-PC message to Client: {msg['client_id']} for trans: {msg['command']}")
+                f"{Colors.BLUE}Sent ABORT message for Two-PC message to Client: {msg['client_id']} for trans: {msg['command']}{Colors.ENDCOLOR}")
             msg = ClientResponseMessage(msg["command"],
                                         self.pid,
                                         msg["client_id"],
@@ -330,7 +329,7 @@ class RaftConsensus:
                     self.state = constants.RaftState.LEADER
                     self.leader = self.pid
                     print(
-                        f"Server {self.pid} became leader in term {self.term}")
+                        f"{Colors.VIOLET}Server {self.pid} became leader in term {self.term}{Colors.ENDCOLOR}")
                     # acquire lock to all the pending commits
                     for i in range(self.commit_index+1, len(self.log)):
                         log_entry = self.log[i]
@@ -423,8 +422,7 @@ class RaftConsensus:
                 self.processing_ids[cmd[1]] = 0
                 with self.conditional_lock_state_machine:
                     self.conditional_lock_state_machine.notify_all()
-                print("FAILED Transaction because of insufficient balance: ",
-                      amt, " for transaction: ", msg["command"])
+                print(f"{Colors.ERROR}Transaction FAILED because of insufficient balance {amt} for command: {msg['command']}{Colors.ENDCOLOR}")
                 send_msg(self.network_server_conn, msg, self.pid)
                 return
 
@@ -609,11 +607,8 @@ class RaftConsensus:
             self.commit_index,
             True).get_message()
         send_msg(self.network_server_conn, msg, self.pid)
-        # self.write_to_disk()
-        print(f"Server {self.pid} log: {self.log}")
-        print(f"Server {self.pid} commit index: {self.commit_index}")
-        print(f"Server {self.pid} term: {self.term}")
-        print(f"Server {self.pid} state: {self.state}")
+
+        print(f"{Colors.BLUE}Updated log with entries from leader {self.leader} with commit index {self.commit_index}{Colors.ENDCOLOR}")
 
     def handle_append_entries_response(self, msg):
         '''
@@ -621,13 +616,9 @@ class RaftConsensus:
         2. If response is not successful, decrement nextIndex and retry
         '''
         if msg["success"]:
-            # since we have only 3 servers in cluster this should work
-            # NOTE below will not work if there are more then 3 server in a cluster
-            # self.commit_index+=1
             # TODO - check if the lock can be removed , (thinking:: whether two concurrent success then we should not commit twice)
             with self.lock:
                 if (self.next_index[msg["sender_server_id"]] < msg["approve_index"]+1):
-                    # TODO -check if its correct
                     self.next_index[msg["sender_server_id"]
                                     ] = msg["approve_index"]+1
                 if (self.server_commit_index[msg["sender_server_id"]] < msg["sender_commit_index"]):
@@ -646,8 +637,8 @@ class RaftConsensus:
                                                      True, log_entry.id, True).get_message()
                         send_msg(self.network_server_conn, msg1, self.pid)
                     else:
-                        # if(cmd[0]>(self.cluster-1) *1000 and cmd[0]<=(self.cluster) *1000):
                         amt = self.state_machine_read(cmd[0])
+                        
                         if (amt < cmd[2]):
                             self.log[i].status = 0
                             self.processing_ids[cmd[0]] -= 1
@@ -655,10 +646,10 @@ class RaftConsensus:
                             with self.conditional_lock_state_machine:
                                 self.pending_request -= 1
                                 self.conditional_lock_state_machine.notify_all()
-                            print("Something has gone wrong PLEASE CHECK!!!!: balance amount is low ",
-                                  amt, " for transaction: ", log_entry.command)
+                            print(f"{Colors.ERROR}Something has gone wrong! Balance amount is low. {amt} for transaction: {log_entry.command}{Colors.ENDCOLOR}")
                             raise ValueError(
-                                f"Something has gone wrong PLEASE CHECK!!!!: balance amount is low {amt} for transaction: {log_entry.command}")
+                                f"{Colors.ERROR}Something has gone wrong!: balance amount is low {amt} for transaction: {log_entry.command}{Colors.ENDCOLOR}")
+                        
                         else:
                             self.log[i].status = 1
                             self.state_machine_write(cmd[0], amt - cmd[2])
@@ -666,7 +657,7 @@ class RaftConsensus:
                             self.state_machine_write(cmd[1], amt + cmd[2])
                             self.processing_ids[cmd[0]] -= 1
                             self.processing_ids[cmd[1]] -= 1
-                            # print(self.processing_ids)
+
                             with self.conditional_lock_state_machine:
                                 self.pending_request -= 1
                                 self.conditional_lock_state_machine.notify_all()
@@ -679,7 +670,8 @@ class RaftConsensus:
                 if (msg["approve_index"] > self.commit_index):
                     self.commit_index += (msg["approve_index"] -
                                           self.commit_index)
-                print("commitID: ", self.commit_index, " done  committing")
+
+                print(f"Committed until index {self.commit_index}")
 
         else:
             if msg["term"] > self.term:
@@ -705,9 +697,8 @@ class RaftConsensus:
                     self.commit_index).get_message()
                 send_msg(self.network_server_conn, msg, self.pid)
                 print("resent message")
-        print("done with handle_append_entries_response")
+                
         self.write_to_disk(True)
-        print("done with writing in handle_append_entries_response")
 
     def read_from_disk(self):
         '''
@@ -719,14 +710,12 @@ class RaftConsensus:
             with open(filename, 'r') as file:
                 self.commit_index = int(file.readline())
                 data = json.load(file)
-                # print(data , "read log form disk")
                 self.log = [LogEntry.from_dict(item) for item in data]
                 self.last_log_writtern_disk = len(self.log)
                 self.term = self.log[-1].term
                 self.last_log_index = self.log[-1].index
                 self.last_log_term = self.log[-1].term
                 self.pending_request = self.last_log_index - self.commit_index
-        # print( self.commit_index, self.log, self.term, self.last_log_index , " all these are updated from disk")
 
     def state_machine_read(self, row_id):
         '''
@@ -734,14 +723,11 @@ class RaftConsensus:
         '''
         filename = f'{config.FILEPATH}/stateMachine_{self.pid}.txt'
         # TODO - write more optimal solution because below loop over to find the offset
-        # print("read request is ", row_id)
         try:
             with open(filename, 'r+b') as file:
                 row_offset = row_id - (self.cluster-1) * 1000
                 file.seek((row_offset-1) * 16)
                 row = struct.unpack('dd', file.read(16))
-                # value = struct.unpack('q', file.read(8))[0]
-                # print(row ," row read")
                 value = row[1]  # int(row.split()[1])
 
                 return value
@@ -759,15 +745,13 @@ class RaftConsensus:
         filename = f'{config.FILEPATH}/stateMachine_{self.pid}.txt'
         
         if not os.path.exists(filename):
-            # data = np.random.randint(0, 100, size=100, dtype=np.int64)
             with open(filename, 'wb') as file:
                 st = (self.cluster-1) * 1000+1
                 # for now creating the random file but we need to have the actual file
                 for i in range(st, st+1000):
-                    # file.write(f"{struct.pack('q', i)} {struct.pack('q', 10)}\n".encode())
                     file.write(struct.pack('dd', np.float64(i), np.float64(10)))
 
-        if (val!=None):
+        if (val != None):
             with open(filename, 'r+b') as file:
                 offset = 0
                 row_offset = row_id - (self.cluster-1) * 1000

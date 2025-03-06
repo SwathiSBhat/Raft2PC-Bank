@@ -138,8 +138,6 @@ If both go through
 2 - (11-1+1) = 11
 1500 - 11
 
-**[FAILURE]** - print_committed_txns prints 1500,2,1 even though that's aborted
-
 ### Leader fails and then initiate concurrent transactions (intra-shard and cross-shard)
 Client 1:
 3,4,1
@@ -160,52 +158,46 @@ Kill server 2,3, ensure 1 is the leader
 Client 1:
 11,1200,1
 **Output**
-**[FAILURE]** 
-In this case, 1 still keeps waiting to get response, client retries and the retry fails.
-Then bring server 2 back up and wait for it's log to get updated.
-Then bring server 3 back up. It gets stuck in loop in line 486. Any further intra-shard transactions does not go to server 3.
-print_committed_txns prints 11,1200,1 in servers 4,5,6 
+1 should make no progress and wait until majority to send a YES/NO to client
+Once 2 is up, it sends a YES for 2PC and executes txn. 3 also gets updated
 
 ### Concurrent intra-shard transactions on same items with 
 
 
 ### Partition leader + 2 nodes and intra-shard transaction
+If server 3 is leader and it gets partitioned, send 1,2,1 from client
 **Output**
-**[FAILURE]**
-If request goes to partitioned leader, client retries and works in the majority nodes.
-But on fixing the link for the partitioned server, it gives the error:
-```
-Traceback (most recent call last):
-  File "/Users/swathi/.pyenv/versions/3.8.10/lib/python3.8/threading.py", line 932, in _bootstrap_inner
-    self.run()
-  File "/Users/swathi/.pyenv/versions/3.8.10/lib/python3.8/threading.py", line 870, in run
-    self._target(*self._args, **self._kwargs)
-  File "server.py", line 30, in handle_server_msg
-    raft.handle_message(data)
-  File "/Users/swathi/Documents/UCSB/CS 271/Project/Raft2PC-Bank/consensus_module.py", line 166, in handle_message
-    self.handle_append_entries(msg)
-  File "/Users/swathi/Documents/UCSB/CS 271/Project/Raft2PC-Bank/consensus_module.py", line 489, in handle_append_entries
-    cmd = [int(x) if i < 2 else float(x) for i, x in enumerate(self.log[j_temp].command.split(','))]#list(map(int, self.log[j_temp].command.split(",")))
-  File "/Users/swathi/Documents/UCSB/CS 271/Project/Raft2PC-Bank/consensus_module.py", line 489, in <listcomp>
-    cmd = [int(x) if i < 2 else float(x) for i, x in enumerate(self.log[j_temp].command.split(','))]#list(map(int, self.log[j_temp].command.split(",")))
-ValueError: invalid literal for int() with base 10: ''
-```
+If request goes to partitioned leader, client retries and works in the majority nodes to make progress.
+1 - 9
+2 - 11
 
 ### Partition leader + 2 nodes on both clusters and cross-shard
+**Output**
+A new leader should get elected and make progress. If the request goes to the old leader, it should timeout and the client will retry eventually reaching the group of 2 nodes. 
 
 ### Partition leader with a node + another node and intra-shard transaction
+**Output**
+Another node which is partitioned continuously tries to become leader but does not get enough votes. Leader and other node make progress.
 
 ### Intra-shard with amt > balance
-
+**Output**
+Aborts transaction
 
 ### Cross-shard with amt > balance for 1 of them
-Should abort
+**Output**
+Aborts transaction
 
 ### Intra-shard with amt = balance
+**Output**
+Works as expected
 
 ### Cross-shard with amt = balance
+**Output**
+Works as expected
 
 ### Partition off non-leader and ensure request going to partitioned node is retried
+**Output**
+Works fine
 
 ### Recovery from partitioning after partitioning leader
 

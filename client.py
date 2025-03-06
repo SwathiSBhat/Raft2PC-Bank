@@ -9,7 +9,7 @@ import os
 import socket
 import config
 import threading
-from common_utils import send_msg, MessageType
+from common_utils import send_msg, MessageType, Colors
 from constants import TransactionStatus
 import json
 from rich.table import Table
@@ -41,14 +41,14 @@ def handle_server_msg(conn, data):
             else:
                 # If both clusters have responded with a true, send commit
                 if (prev_status_id[data["trans_id"]] and data["prepare_status"] == True):
-                    print("PREPARE STATUS: YES from both the clusters")
+                    print(f"{Colors.YELLOW}PREPARE STATUS: YES from both the clusters{Colors.ENDCOLOR}")
                     msg = {"msg_type": "client_commit",
                            "command": data["command"], "client_id": cid, "trans_id": data["trans_id"], "commit": True}
                     send_msg(network_sock, msg)
                 # Else, send abort
                 else:
                     print(
-                        f"PREPARE STATUS: NO from one of the clusters so transaction failed for : {data['command']}")
+                        f"{Colors.ERROR}PREPARE STATUS: NO from one of the clusters so transaction failed for : {data['command']}{Colors.ENDCOLOR}")
                     msg = {"msg_type": "client_commit",
                            "command": data["command"], "client_id": cid, "trans_id": data["trans_id"], "commit": False}
                     send_msg(network_sock, msg)
@@ -56,8 +56,14 @@ def handle_server_msg(conn, data):
         return
 
     if data["msg_type"] == MessageType.BALANCE_RESPONSE:
-        print(
-            f"Balance of account {data['account_id']} on server {data['server_id']} is {data['balance']}")
+        # Print as table
+        table = Table(title="", show_header=True, header_style="bold cyan")
+
+        table.add_column("Server ID", style="bold", justify="left")
+        table.add_column("Account ID", style="bold blue", justify="center")
+        table.add_column("Balance", style="bold red", justify="right")
+        table.add_row(str(data['server_id']), str(data['account_id']), str(data['balance']))
+        console.print(table)
         return
 
     elif data["msg_type"] == MessageType.CLIENT_RESPONSE:
@@ -67,20 +73,20 @@ def handle_server_msg(conn, data):
             if transaction_id in transactions and transactions[transaction_id] == TransactionStatus.PENDING:
                 if data['status']:
                     transactions[transaction_id] = TransactionStatus.SUCCESS
+                    print(f"{Colors.GREEN}Command {data['command']} successfully executed for transaction id {transaction_id}{Colors.ENDCOLOR}")
                 else:
                     transactions[transaction_id] = TransactionStatus.FAILURE
+                    print(f"{Colors.ERROR}Command {data['command']} failed for transaction id {transaction_id}{Colors.ENDCOLOR}")
                     
                 # Calculate latency
                 latency[transaction_id] = time.perf_counter() - latency[transaction_id]
-                print(f"Latency: {latency[transaction_id]} seconds")
+                print(f"Latency of transaction {transaction_id}: {Colors.YELLOW}{latency[transaction_id]} seconds {Colors.ENDCOLOR}")
                     
                 # Notify the condition variable so the watchdog thread stops waiting
                 if transaction_id in watchdogs:
                     with watchdogs[transaction_id]:
                         watchdogs[transaction_id].notify_all()
                         
-        print(f"Response from server: {data}")
-        print(f"Latency for transaction {transaction_id} is {latency[transaction_id]} seconds")
 
 def recv_msg(conn, addr):
     buffer = ""
@@ -101,7 +107,7 @@ def recv_msg(conn, addr):
                 threading.Thread(target=handle_server_msg,
                                  args=(conn, msg)).start()
             except:
-                print("[ERROR] Exception in handling message at server {pid}")
+                print(f"{Colors.ERROR}[ERROR] Exception in handling message at server{Colors.ENDCOLOR}")
                 break
             
 def transaction_watchdog(transactionid, msg, timeout=15*config.NETWORK_DELAY):
@@ -125,7 +131,7 @@ def transaction_watchdog(transactionid, msg, timeout=15*config.NETWORK_DELAY):
             # restart the watchdog
             threading.Thread(target=transaction_watchdog, args=(transactionid, msg)).start()
         else:
-            print(f"Transaction {transactionid} completed successfully.")
+            print(f"{Colors.GREEN}Transaction {transactionid} completed successfully.{Colors.ENDCOLOR}")
             # Remove the condition from the dictionary
             with lock:
                 del watchdogs[transactionid]
@@ -153,6 +159,9 @@ def get_user_input():
         # If command is print_balance, print balance of account
         # from all servers in the cluster
         elif cmd == "print_balance":
+            if len(user_input.split()) != 2:
+                print("Invalid command format. Usage: print_balance <account_id>")
+                continue
             msg = {"msg_type": MessageType.PRINT_BALANCE,
                    "command": user_input.split()[1], "client_id": cid}
 
@@ -197,11 +206,20 @@ def get_user_input():
             continue            
             
         else:
+            
+            # If sender or receriver < 1 or > 3000, invalid command
+            sender = int(user_input.split(',')[0])
+            receiver = int(user_input.split(',')[1])
+            if sender < 1 or sender > 3000 or receiver < 1 or receiver > 3000:
+                print(f"{Colors.ERROR}Invalid command. Sender and receiver should be between 1 and 3000{Colors.ENDCOLOR}")
+                continue
+            
             # Transaction ID = clientId_transId
             with lock:
                 temp_id = trans_id
                 trans_id += 1
             transactionid = str(cid) + "_" + str(temp_id)
+            
             msg = {"msg_type": "client_request_init", "command": user_input,
                    "client_id": cid, "trans_id": transactionid}
             with lock:
