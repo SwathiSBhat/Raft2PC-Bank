@@ -370,7 +370,8 @@ class RaftConsensus:
         2. Send append entries to all servers
         '''
         cmd = [int(x) if ih < 2 else float(x) for ih, x in enumerate(msg["command"].split(','))]#list(map(int, msg["command"].split(",")))
-        with self.lock:
+        #with self.lock:
+        with self.conditional_lock_state_machine:
             if(msg["trans_id"] in self.trans_id_log):
                 temp_log=self.log[self.trans_id_log[msg["trans_id"]]]
                 if(temp_log.status==-1):
@@ -383,10 +384,10 @@ class RaftConsensus:
                                                      log_stat, temp_log.id).get_message()
                     send_msg(self.network_server_conn, msg1, self.pid)
                 return
-        with self.conditional_lock_state_machine:
+        #with self.conditional_lock_state_machine:
             # If either sender or receiver is locked i.e as part of another transaction 
             # wait until the transaction is completed
-            while (self.processing_ids[cmd[0]] != 0 or self.processing_ids[cmd[1]] != 0):
+            while (((cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000) and self.processing_ids[cmd[0]] != 0) or ((cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster)* 1000) and self.processing_ids[cmd[1]] != 0)):
                 print(
                     f" STUCK in this this loop {cmd} {self.processing_ids} in line 345\n\n")
                 
@@ -527,7 +528,8 @@ class RaftConsensus:
                             self.two_pc_log[self.log[j_temp].id] = self.log[j_temp]
                             with self.conditional_lock_state_machine:
                                 # TODO - check if this wait is required??
-                                while (self.processing_ids[cmd[0]] != 0 or self.processing_ids[cmd[1]] != 0):
+                                #while (self.processing_ids[cmd[0]] != 0 or self.processing_ids[cmd[1]] != 0):
+                                while (((cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000) and self.processing_ids[cmd[0]] != 0) or ((cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster) * 1000) and self.processing_ids[cmd[1]] != 0)):
                                     print(
                                         f"STUCK in this this loop {cmd} {self.processing_ids} {self.log}in line 472\n\n")
                                     self.conditional_lock_state_machine.wait()
@@ -561,7 +563,8 @@ class RaftConsensus:
                 
                 with self.conditional_lock_state_machine:
                     # TODO - check if this wait is required??
-                    while (self.processing_ids[cmd[0]] != 0 or self.processing_ids[cmd[1]] != 0):
+                    #while (self.processing_ids[cmd[0]] != 0 or self.processing_ids[cmd[1]] != 0):
+                    while (((cmd[0] > (self.cluster-1) * 1000 and cmd[0] <= (self.cluster) * 1000) and self.processing_ids[cmd[0]] != 0) or ((cmd[1] > (self.cluster-1) * 1000 and cmd[1] <= (self.cluster) * 1000) and self.processing_ids[cmd[1]] != 0)):
                         print(
                             f"STUCK in this this loop {cmd} {self.processing_ids} {log_entry}in 486 line\n\n")
                         self.conditional_lock_state_machine.wait()

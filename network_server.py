@@ -197,7 +197,7 @@ def get_user_input():
         # wait for user input
         user_input = input()
         cmd = user_input.split()[0]
-
+        print(cmd)
         if cmd == "exit":
             # close all client sockets
             for sock in out_socks:
