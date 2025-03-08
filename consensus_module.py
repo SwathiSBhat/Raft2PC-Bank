@@ -254,6 +254,7 @@ class RaftConsensus:
         self.term += 1
         self.voted_for = self.pid
         self.votes = 1
+        #print(self.term , " term value\n\n")
         self.send_vote_request()
         self.reset_election_timer()
 
@@ -294,9 +295,9 @@ class RaftConsensus:
         sender_server_id = msg["candidate_id"]
         vote = False
 
-        if msg["term"] > self.term or \
-            ((msg["term"] == self.term and (self.voted_for is None or self.voted_for == sender_server_id)) and
-             (msg["last_log_index"] >= self.last_log_index and msg["last_log_term"] >= self.last_log_term)):
+        if ((msg["term"] > self.term or
+            (msg["term"] == self.term and (self.voted_for is None or self.voted_for == sender_server_id))) and
+             ((msg["last_log_index"] >= self.last_log_index and msg["last_log_term"] >= self.last_log_term))):
             self.state = constants.RaftState.FOLLOWER
             self.term = msg["term"]
             self.voted_for = sender_server_id
@@ -307,6 +308,12 @@ class RaftConsensus:
         else:
             print(
                 f"Rejected vote request from server {sender_server_id} for term {msg['term']}")
+            if msg["term"] > self.term:
+                self.term = msg["term"]
+                self.state = constants.RaftState.FOLLOWER
+                self.voted_for = None
+                self.leader = None
+            self.reset_election_timer()
 
         self.write_to_disk()
         msg = VoteResponseMessage(
@@ -346,13 +353,14 @@ class RaftConsensus:
                         self.heartbeat_timeout, self.start_heartbeat_timer)
                     self.heartbeat_timer.start()
         else:
+            #print(msg , " msg value\n\n")
             # Update term if term in response is greater
             if msg["term"] > self.term:
                 self.term = msg["term"]
                 self.state = constants.RaftState.FOLLOWER
                 self.voted_for = None
                 self.leader = None
-                self.reset_election_timer()
+            self.reset_election_timer()
 
         self.write_to_disk()
 

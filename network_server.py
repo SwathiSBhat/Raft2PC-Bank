@@ -13,7 +13,7 @@ import config
 import json
 from common_utils import (
     send_msg, get_servers_in_cluster, MessageType, ClientRequestMessage,
-    get_cluster_from_dataitem
+    get_cluster_from_dataitem ,get_cluster
 )
 import random
 
@@ -209,6 +209,7 @@ def get_user_input():
         elif cmd == "fail_node":
             # failNode <node_id>
             node_id = int(user_input.split()[1])
+            #print(out_socks , " output socket")
             # kill the server node with the given node_id
             for sock, addr in out_socks:
                 if addr[1] == node_id:
@@ -221,7 +222,7 @@ def get_user_input():
         elif cmd == "fail_node_links":
             # Fail all links to the given node_id
             node_id = int(user_input.split()[1])
-            servers = get_servers_in_cluster(get_cluster_from_dataitem(node_id))
+            servers = get_servers_in_cluster(get_cluster(node_id))
             for i in servers:
                 if i != node_id:
                     if i < node_id:
@@ -234,7 +235,7 @@ def get_user_input():
         elif cmd == "fix_node_links":
             # Fix all links to the given node_id
             node_id = int(user_input.split()[1])
-            servers = get_servers_in_cluster(get_cluster_from_dataitem(node_id))
+            servers = get_servers_in_cluster(get_cluster(node_id))
             for i in servers:
                 if i != node_id:
                     if i < node_id:
