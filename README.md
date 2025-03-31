@@ -87,5 +87,7 @@ python3 server.py 9
 4. Recovery from failure and partitioning - The recovered server will automatically update it's log to the latest.
 
 ## Contributors
-
+<a href="https://github.com/SwathiSBhat/Raft2PC-Bank/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=SwathiSBhat/Raft2PC-Bank" />
+</a>
 
